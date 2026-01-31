@@ -197,6 +197,38 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # FastAPI Backend - ML Predictions API
+  api:
+    image: python:3.11-slim
+    container_name: api-backend
+    depends_on:
+      - mongodb
+      - clickhouse
+    working_dir: /app
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      MONGODB_DB: airline_ml
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      MODEL_PATH: /app/models/ml_runs/latest
+    command: sh -c "pip install -r backend/requirements.txt && uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload"
+    networks:
+      - airline-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   zookeeper-data:
   zookeeper-logs:
