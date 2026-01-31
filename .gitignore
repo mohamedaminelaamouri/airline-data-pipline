@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+.venv-consumer/
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/*
+!logs/.gitkeep
+
+# Data
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Raw benchmark dataset (optional, large). Templates are tracked separately.
+Airline_Delay_Cause.csv
+
+# Exported samples
+*.ndjson
+
+# NOTE: Do NOT ignore all CSV files.
+# This repo intentionally tracks CSV datasets and templates.
+
+# Project documents (optional - uncomment if you don't want to share)
+# *.pdf
+
+# Models
+models/*.pkl
+models/*.joblib
+models/*.h5
+!models/.gitkeep
+
+# NiFi
+nifi/state/
+nifi/logs/
+
+# Kafka
+kafka/logs/
+
+# ClickHouse data
+clickhouse/data/
+clickhouse/logs/
+
+# MongoDB data
+mongodb/data/
+
+# Temporary files
+*.tmp
+temp/
+
+# ML artifacts (too large for Git)
+models/ml_runs/
+data/temp_ml_train.csv
+
+# yno-ml included as single repo (no longer separate)
+# yno-ml/
+
+# Logs
+logs/*.log
