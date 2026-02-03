@@ -202,7 +202,11 @@ class TransformCallback(StreamCallback):
             arr_cancelled = int(round(arr_flights * cancel_rate))
             arr_diverted = int(round(arr_flights * divert_rate))
 
-            unique_id = "{}_{}".format(str(uuid.uuid4()), int(time.time() * 1000))
+            # Generate year for new record
+            generated_year = random.choice([2023, 2024, 2025])
+            
+            # Create deterministic ID format: YYYYMMCARRIERAIRPORT (same as script)
+            unique_id = "{}{}{}{}".format(generated_year, str(month).zfill(2), base_carrier, base_airport)
 
             self.output_record = {
                 'id': unique_id,
@@ -211,8 +215,7 @@ class TransformCallback(StreamCallback):
                 'processing_timestamp': time.strftime('%Y-%m-%d %H:%M:%S.000'),
                 'sequence_number': int(time.time() * 1000),
 
-                # 'year': 2025,
-                'year': random.choice([2023, 2024, 2025]),
+                'year': generated_year,
                 'month': month,
                 'carrier': base_carrier,
                 'carrier_name': base_carrier_name,

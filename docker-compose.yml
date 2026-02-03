@@ -1,8 +1,16 @@
-# Docker Compose - Airline Delay Data Pipeline
-# Configuration pour un seul PC
+# =============================================================================
+# AIRLINE DELAY DATA PIPELINE - Docker Compose
+# =============================================================================
+# Architecture: Kafka -> NiFi -> ClickHouse -> ML API -> React UI
+# Optimized for 8GB RAM
+# =============================================================================
 
 services:
-  # Zookeeper - Required for Kafka
+
+  # ===========================================================================
+  # LAYER 1: MESSAGE BROKER (Kafka + Zookeeper)
+  # ===========================================================================
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
@@ -16,13 +24,13 @@ services:
       - zookeeper-logs:/var/lib/zookeeper/log
     networks:
       - airline-network
+    mem_limit: 256m
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "5m"
+        max-file: "2"
 
-  # Kafka Broker
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
@@ -38,88 +46,74 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
-      KAFKA_LOG_RETENTION_HOURS: 168
-      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 536870912
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
     volumes:
       - kafka-data:/var/lib/kafka/data
     networks:
       - airline-network
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 45s
+      timeout: 15s
+      retries: 3
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+        max-size: "5m"
+        max-file: "2"
 
-  # Apache NiFi
+  # ===========================================================================
+  # LAYER 2: DATA INGESTION (NiFi)
+  # ===========================================================================
+
   nifi:
     image: apache/nifi:1.23.2
     container_name: nifi
     ports:
       - "8080:8080"
-      - "8443:8443"
     environment:
-      - NIFI_WEB_HTTP_PORT=8080
-      - NIFI_WEB_HTTP_HOST=0.0.0.0
-      - NIFI_CLUSTER_IS_NODE=false
-      - SINGLE_USER_CREDENTIALS_USERNAME=admin
-      - SINGLE_USER_CREDENTIALS_PASSWORD=adminadminadmin
-      - NIFI_JVM_HEAP_INIT=2g
-      - NIFI_JVM_HEAP_MAX=2g
+      NIFI_WEB_HTTP_PORT: 8080
+      NIFI_WEB_HTTP_HOST: 0.0.0.0
+      NIFI_CLUSTER_IS_NODE: "false"
+      SINGLE_USER_CREDENTIALS_USERNAME: admin
+      SINGLE_USER_CREDENTIALS_PASSWORD: adminadminadmin
+      NIFI_JVM_HEAP_INIT: 512m
+      NIFI_JVM_HEAP_MAX: 1024m
     volumes:
       - nifi-database:/opt/nifi/nifi-current/database_repository
       - nifi-flowfile:/opt/nifi/nifi-current/flowfile_repository
       - nifi-content:/opt/nifi/nifi-current/content_repository
-      - nifi-provenance:/opt/nifi/nifi-current/provenance_repository
       - nifi-state:/opt/nifi/nifi-current/state
       - nifi-logs:/opt/nifi/nifi-current/logs
-      - nifi-conf:/opt/nifi/nifi-current/conf
       - ./data:/data
     networks:
       - airline-network
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    mem_limit: 1536m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/nifi"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  # Kafka UI - Monitoring
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    depends_on:
-      - kafka
-    ports:
-      - "8081:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: airline-kafka
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
-    networks:
-      - airline-network
+      interval: 45s
+      timeout: 15s
+      retries: 3
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "5m"
+        max-file: "2"
 
-  # ClickHouse Database
+  # ===========================================================================
+  # LAYER 3: DATABASES
+  # ===========================================================================
+
   clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:23.8
     container_name: clickhouse
     ports:
-      - "8123:8123"  # HTTP interface
-      - "9000:9000"  # Native TCP interface
+      - "8123:8123"
+      - "9000:9000"
     environment:
       CLICKHOUSE_DB: airline_data
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
@@ -129,121 +123,162 @@ services:
       - ./config/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - airline-network
+    mem_limit: 2048m
     ulimits:
       nofile:
-        soft: 262144
-        hard: 262144
+        soft: 65536
+        hard: 65536
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      interval: 45s
+      timeout: 15s
+      retries: 3
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "5m"
+        max-file: "2"
 
-  # MongoDB - Cache layer for aggregations
   mongodb:
     image: mongo:7.0
     container_name: mongodb
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_DATABASE: airline_cache
+      MONGO_INITDB_DATABASE: airline_ml
     volumes:
       - mongodb-data:/data/db
-      - mongodb-config:/data/configdb
     networks:
       - airline-network
+    mem_limit: 1024m
+    command: mongod --wiredTigerCacheSizeGB 0.5
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      interval: 45s
+      timeout: 15s
+      retries: 3
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "5m"
+        max-file: "2"
 
-  # Streamlit - Real-time dashboard (ClickHouse + Kafka)
-  streamlit:
+  # ===========================================================================
+  # LAYER 4: ML PREDICTION API
+  # ===========================================================================
+
+  ml_api:
     image: python:3.11-slim
-    container_name: streamlit
+    container_name: ml-api
     depends_on:
-      - kafka
       - clickhouse
     working_dir: /app
     volumes:
       - ./:/app
     ports:
-      - "8501:8501"
+      - "8001:8001"
     environment:
-      KAFKA_HOST: kafka
-      KAFKA_PORT: "29092"
-      KAFKA_TOPIC: airline-delays
-      STREAMLIT_KAFKA_GROUP_ID: airline-streamlit-ui-backfill
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_HTTP_PORT: "8123"
       CLICKHOUSE_DATABASE: airline_data
-    command: sh -c "pip install -r requirements-streamlit.txt && streamlit run visualization/realtime_app.py --server.port 8501 --server.address 0.0.0.0"
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements-ml-api.txt && 
+             uvicorn ml_api.app:app --host 0.0.0.0 --port 8001"
     networks:
       - airline-network
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # FastAPI Backend - ML Predictions API
-  api:
-    image: python:3.11-slim
-    container_name: api-backend
-    depends_on:
-      - mongodb
-      - clickhouse
-    working_dir: /app
-    volumes:
-      - ./:/app
-    ports:
-      - "8000:8000"
-    environment:
-      MONGODB_URL: mongodb://mongodb:27017
-      MONGODB_DB: airline_ml
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_PORT: "8123"
-      MODEL_PATH: /app/models/ml_runs/latest
-    command: sh -c "pip install -r backend/requirements.txt && uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload"
-    networks:
-      - airline-network
+    mem_limit: 512m
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "5m"
+        max-file: "2"
+
+  # ===========================================================================
+  # LAYER 5: USER INTERFACES
+  # ===========================================================================
+
+  # React Dashboard - ML Predictions (Port 3000)
+  ml_ui:
+    image: node:20-alpine
+    container_name: ml-ui
+    depends_on:
+      - ml_api
+    working_dir: /app/ml_ui
+    volumes:
+      - ./:/app
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_URL: http://localhost:8001
+    command: sh -c "npm install && npm run dev"
+    networks:
+      - airline-network
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Streamlit Dashboard - Real-time Monitoring (Port 8501)
+  streamlit:
+    image: python:3.11-slim
+    container_name: streamlit-realtime
+    depends_on:
+      - clickhouse
+      - kafka
+    working_dir: /app
+    volumes:
+      - ./:/app
+    ports:
+      - "8501:8501"
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_HTTP_PORT: "8123"
+      CLICKHOUSE_DATABASE: airline_data
+      KAFKA_HOST: kafka
+      KAFKA_PORT: "29092"
+      KAFKA_TOPIC: airline-delays
+    command: >
+      sh -c "pip install --no-cache-dir streamlit streamlit-autorefresh confluent-kafka clickhouse-connect plotly pandas numpy && 
+             streamlit run realtime_app.py --server.port 8501 --server.address 0.0.0.0"
+    networks:
+      - airline-network
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
 
 volumes:
+  # Kafka
   zookeeper-data:
   zookeeper-logs:
   kafka-data:
+  # NiFi
   nifi-database:
   nifi-flowfile:
   nifi-content:
-  nifi-provenance:
   nifi-state:
   nifi-logs:
-  nifi-conf:
+  # Databases
   clickhouse-data:
   clickhouse-logs:
   mongodb-data:
-  mongodb-config:
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
 
 networks:
   airline-network:

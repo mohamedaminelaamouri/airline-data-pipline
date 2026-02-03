@@ -1,0 +1,4 @@
+fastapi==0.115.7
+uvicorn==0.30.6
+clickhouse-connect==0.6.23
+pandas==2.1.4

@@ -114,3 +114,19 @@ AS SELECT
     avgState(toFloat32(arr_delay) / toFloat32(arr_flights)) as avg_delay_rate
 FROM flights
 GROUP BY ingestion_minute;
+
+-- ML Predictions table (gold layer)
+CREATE TABLE IF NOT EXISTS gold_predictions (
+    carrier String,
+    origin_airport String,
+    year UInt16,
+    month UInt8,
+    predicted_delay_rate Float32,
+    arr_flights UInt32,
+    arr_del15 UInt32,
+    model_version String,
+    created_at DateTime DEFAULT now()
+) ENGINE = MergeTree()
+ORDER BY (carrier, origin_airport, year, month)
+PARTITION BY (year, month)
+SETTINGS index_granularity = 8192;

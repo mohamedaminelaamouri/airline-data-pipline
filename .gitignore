@@ -87,3 +87,7 @@ data/temp_ml_train.csv
 
 # Logs
 logs/*.log
+
+# Node.js
+node_modules/
+ml_ui/node_modules/

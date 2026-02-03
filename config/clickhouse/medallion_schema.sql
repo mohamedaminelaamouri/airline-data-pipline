@@ -1,416 +1,330 @@
--- ═══════════════════════════════════════════════════════════════
--- ARCHITECTURE MÉDAILLON - CLICKHOUSE
--- Scenario A: Bronze → Silver → Gold layers
--- Date: 2026-01-31
--- ═══════════════════════════════════════════════════════════════
+-- ============================================================================
+-- MEDALLION ARCHITECTURE: Bronze → Silver → Gold
+-- ============================================================================
+--
+--  ┌─────────────┐      ┌─────────────┐      ┌─────────────────────────┐
+--  │   BRONZE    │─────▶│   SILVER    │─────▶│          GOLD           │
+--  │  (Raw Data) │      │  (Cleaned)  │      │  ┌─────────┬─────────┐  │
+--  │             │      │             │      │  │ gold_bi │ gold_ml │  │
+--  │ • Nulls OK  │      │ • NOT NULL  │      │  │(PowerBI)│(XGBoost)│  │
+--  │ • Doublons  │      │ • Validé    │      │  └─────────┴─────────┘  │
+--  │ • Erreurs   │      │ • Typé      │      │           │             │
+--  └─────────────┘      └─────────────┘      └───────────┼─────────────┘
+--                                                        ▼
+--                                               ┌─────────────────┐
+--                                               │  ml_predictions │
+--                                               └─────────────────┘
+--
+-- ============================================================================
 
+CREATE DATABASE IF NOT EXISTS airline_data;
 USE airline_data;
 
--- ═══════════════════════════════════════════════════════════════
--- LAYER BRONZE: Raw Data (Kafka → ClickHouse)
--- Purpose: Audit trail, replay capability, data lineage
--- Retention: 90 days (TTL)
--- ═══════════════════════════════════════════════════════════════
+-- ============================================================================
+-- BRONZE: Données brutes (telles quelles du CSV)
+-- ============================================================================
+-- Objectif: Conserver les données originales sans transformation
+-- Source: CSV importé via NiFi/Kafka ou script Python
+-- ============================================================================
 
-CREATE TABLE IF NOT EXISTS flights_bronze (
-    -- Raw payload from Kafka
-    raw_json String,
+CREATE TABLE IF NOT EXISTS bronze_flights (
+    -- Identifiant
+    id String DEFAULT generateUUIDv4(),
     
-    -- Kafka metadata
-    kafka_topic String DEFAULT 'airline-delays',
-    kafka_partition UInt32,
-    kafka_offset UInt64,
-    kafka_timestamp DateTime64(3),
+    -- Données temporelles (peuvent être NULL)
+    year Nullable(UInt16),
+    month Nullable(UInt8),
     
-    -- Processing metadata
-    ingestion_timestamp DateTime DEFAULT now(),
-    processing_status Enum8(
-        'pending' = 0,
-        'processed' = 1,
-        'failed' = 2,
-        'skipped' = 3
-    ) DEFAULT 'pending',
-    processing_error String DEFAULT '',
-    processing_attempts UInt8 DEFAULT 0,
+    -- Compagnie (peuvent être NULL ou vides)
+    carrier Nullable(String),
+    carrier_name Nullable(String),
     
-    -- Source tracking
-    source_system String DEFAULT 'nifi',
-    source_version String DEFAULT 'v1.0',
+    -- Aéroport (peuvent être NULL ou vides)
+    airport Nullable(String),
+    airport_name Nullable(String),
     
-    -- Data quality
-    json_valid Bool DEFAULT 1,
-    schema_version String DEFAULT 'v1'
+    -- Métriques de vol (peuvent être NULL)
+    arr_flights Nullable(UInt32),
+    arr_del15 Nullable(UInt32),
+    carrier_ct Nullable(Float32),
+    weather_ct Nullable(Float32),
+    nas_ct Nullable(Float32),
+    security_ct Nullable(Float32),
+    late_aircraft_ct Nullable(Float32),
+    arr_cancelled Nullable(UInt32),
+    arr_diverted Nullable(UInt32),
+    arr_delay Nullable(Float32),
+    carrier_delay Nullable(Float32),
+    weather_delay Nullable(Float32),
+    nas_delay Nullable(Float32),
+    security_delay Nullable(Float32),
+    late_aircraft_delay Nullable(Float32),
+    
+    -- Métadonnées d'ingestion
+    source_file String DEFAULT '',
+    ingestion_timestamp DateTime DEFAULT now()
     
 ) ENGINE = MergeTree()
-PARTITION BY toYYYYMM(ingestion_timestamp)
-ORDER BY (ingestion_timestamp, kafka_partition, kafka_offset)
-TTL ingestion_timestamp + INTERVAL 90 DAY
+ORDER BY (ingestion_timestamp, id)
 SETTINGS index_granularity = 8192;
 
--- Index for fast lookup by Kafka offset
-ALTER TABLE flights_bronze ADD INDEX idx_kafka_offset kafka_offset TYPE minmax GRANULARITY 4;
+-- ============================================================================
+-- SILVER: Données nettoyées et validées
+-- ============================================================================
+-- Objectif: Données propres, typées, sans NULL, sans doublons
+-- Transformations:
+--   • Suppression des lignes avec NULL sur colonnes critiques
+--   • Déduplication par (year, month, carrier, airport)
+--   • Calcul du delay_rate
+--   • Validation des plages de valeurs
+-- ============================================================================
 
--- ═══════════════════════════════════════════════════════════════
--- LAYER SILVER: Cleaned & Validated Data
--- Purpose: Business-ready data, validated, enriched
--- Retention: 5 years
--- ═══════════════════════════════════════════════════════════════
-
-CREATE TABLE IF NOT EXISTS flights_silver (
-    -- Business keys
+CREATE TABLE IF NOT EXISTS silver_flights (
+    -- Identifiant unique
     id String,
+    
+    -- Données temporelles (validées)
     year UInt16,
     month UInt8,
-    carrier FixedString(2),
+    
+    -- Compagnie (nettoyée)
+    carrier String,
     carrier_name String,
-    airport FixedString(3),
+    
+    -- Aéroport (nettoyé)
+    airport String,
     airport_name String,
     
-    -- Metrics (validated)
+    -- Métriques de vol (validées, défaut 0)
     arr_flights UInt32,
     arr_del15 UInt32,
-    arr_delay UInt32,
-    arr_cancelled UInt16,
-    arr_diverted UInt16,
     
-    -- Delay breakdown (minutes)
-    carrier_delay UInt32,
-    weather_delay UInt32,
-    nas_delay UInt32,
-    security_delay UInt16,
-    late_aircraft_delay UInt32,
+    -- Taux de retard calculé
+    delay_rate Float32,  -- = arr_del15 / arr_flights (0 si arr_flights = 0)
     
-    -- Delay causes breakdown (counts)
-    carrier_ct Float32,
-    weather_ct Float32,
-    nas_ct Float32,
-    security_ct Float32,
-    late_aircraft_ct Float32,
+    -- Causes de retard
+    carrier_ct Float32 DEFAULT 0,
+    weather_ct Float32 DEFAULT 0,
+    nas_ct Float32 DEFAULT 0,
+    security_ct Float32 DEFAULT 0,
+    late_aircraft_ct Float32 DEFAULT 0,
     
-    -- Calculated KPIs (materialized columns)
-    delay_rate Float32 MATERIALIZED 
-        CASE WHEN arr_flights > 0 THEN arr_del15 / arr_flights ELSE 0 END,
+    -- Autres métriques
+    arr_cancelled UInt32 DEFAULT 0,
+    arr_diverted UInt32 DEFAULT 0,
+    arr_delay Float32 DEFAULT 0,
     
-    cancel_rate Float32 MATERIALIZED 
-        CASE WHEN arr_flights > 0 THEN arr_cancelled / arr_flights ELSE 0 END,
+    -- Qualité des données
+    data_quality_score Float32 DEFAULT 1.0,  -- 0-1, basé sur complétude
     
-    divert_rate Float32 MATERIALIZED 
-        CASE WHEN arr_flights > 0 THEN arr_diverted / arr_flights ELSE 0 END,
+    -- Métadonnées
+    bronze_id String,  -- Référence vers bronze
+    cleaned_at DateTime DEFAULT now()
     
-    avg_delay_per_flight Float32 MATERIALIZED 
-        CASE WHEN arr_flights > 0 THEN arr_delay / arr_flights ELSE 0 END,
-    
-    avg_delay_per_delayed Float32 MATERIALIZED 
-        CASE WHEN arr_del15 > 0 THEN arr_delay / arr_del15 ELSE 0 END,
-    
-    -- Geographic enrichment (from airports_gps)
-    latitude Float64,
-    longitude Float64,
-    city String,
-    state FixedString(2),
-    country_code FixedString(2) DEFAULT 'US',
-    
-    -- Audit & Lineage
-    bronze_kafka_offset UInt64,  -- Reference to bronze layer
-    processed_at DateTime DEFAULT now(),
-    data_quality_score UInt8,    -- 0-100 quality score
-    validation_flags UInt32,     -- Bitmap of validation checks passed
-    
-    -- Timestamps
-    business_date Date MATERIALIZED toDate(concat(toString(year), '-', toString(month), '-01')),
-    record_hash String MATERIALIZED cityHash64(concat(carrier, airport, toString(year), toString(month)))
-    
-) ENGINE = ReplacingMergeTree(processed_at)
-PARTITION BY (year, month)
-ORDER BY (year, month, carrier, airport, id)
+) ENGINE = ReplacingMergeTree(cleaned_at)
+ORDER BY (year, month, carrier, airport)
+PARTITION BY year
 SETTINGS index_granularity = 8192;
 
--- Indexes for common query patterns
-ALTER TABLE flights_silver ADD INDEX idx_delay_rate delay_rate TYPE minmax GRANULARITY 4;
-ALTER TABLE flights_silver ADD INDEX idx_cancel_rate cancel_rate TYPE minmax GRANULARITY 4;
-ALTER TABLE flights_silver ADD INDEX idx_carrier carrier TYPE set(0) GRANULARITY 4;
-ALTER TABLE flights_silver ADD INDEX idx_airport airport TYPE set(0) GRANULARITY 4;
-ALTER TABLE flights_silver ADD INDEX idx_state state TYPE set(0) GRANULARITY 4;
+-- ============================================================================
+-- GOLD BI: Données agrégées pour Power BI / Reporting
+-- ============================================================================
+-- Objectif: KPIs précalculés pour visualisation rapide
+-- Granularité: Par carrier, airport, année, mois
+-- Usage: Power BI, Dashboards, Reports
+-- ============================================================================
 
--- ═══════════════════════════════════════════════════════════════
--- LAYER GOLD: Business Aggregations (Materialized Views)
--- Purpose: Pre-computed aggregations for dashboards & ML
--- Refresh: Incremental (automatic)
--- ═══════════════════════════════════════════════════════════════
-
--- ───────────────────────────────────────────────────────────────
--- GOLD 1: Airport Performance Summary
--- ───────────────────────────────────────────────────────────────
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS gold_airport_performance
-ENGINE = AggregatingMergeTree()
-PARTITION BY year
-ORDER BY (year, month, airport)
-POPULATE  -- Initialize with existing data
-AS SELECT
-    year,
-    month,
-    airport,
-    any(airport_name) as airport_name,
-    any(city) as city,
-    any(state) as state,
-    any(latitude) as latitude,
-    any(longitude) as longitude,
+CREATE TABLE IF NOT EXISTS gold_bi (
+    -- Dimensions
+    carrier String,
+    carrier_name String,
+    airport String,
+    airport_name String,
+    year UInt16,
+    month UInt8,
     
-    -- Aggregated metrics
-    sum(arr_flights) as total_flights,
-    sum(arr_del15) as total_delayed,
-    sum(arr_cancelled) as total_cancelled,
-    sum(arr_diverted) as total_diverted,
-    sum(arr_delay) as total_delay_minutes,
+    -- KPIs principaux
+    total_flights UInt32,
+    delayed_flights UInt32,
+    delay_rate Float32,              -- % de vols en retard
+    on_time_rate Float32,            -- % de vols à l'heure (1 - delay_rate)
     
-    -- Delay causes
-    sum(carrier_delay) as total_carrier_delay,
-    sum(weather_delay) as total_weather_delay,
-    sum(nas_delay) as total_nas_delay,
-    sum(security_delay) as total_security_delay,
-    sum(late_aircraft_delay) as total_late_aircraft_delay,
+    -- KPIs détaillés par cause
+    carrier_delay_pct Float32,       -- % retards dus à la compagnie
+    weather_delay_pct Float32,       -- % retards météo
+    nas_delay_pct Float32,           -- % retards système national
+    security_delay_pct Float32,      -- % retards sécurité
+    late_aircraft_delay_pct Float32, -- % retards avion précédent
     
-    -- Calculated KPIs
-    avg(delay_rate) as avg_delay_rate,
-    avg(cancel_rate) as avg_cancel_rate,
-    avg(avg_delay_per_flight) as avg_delay_minutes,
+    -- Métriques de volume
+    cancelled_flights UInt32,
+    diverted_flights UInt32,
+    cancel_rate Float32,
+    divert_rate Float32,
     
-    -- Statistical measures
-    quantile(0.50)(delay_rate) as median_delay_rate,
-    quantile(0.90)(delay_rate) as p90_delay_rate,
-    quantile(0.95)(delay_rate) as p95_delay_rate,
+    -- Métriques de temps (en minutes)
+    total_delay_minutes Float32,
+    avg_delay_per_flight Float32,
+    avg_delay_per_delayed Float32,
     
-    -- Data quality
-    avg(data_quality_score) as avg_quality_score,
-    count() as record_count,
+    -- Comparaisons temporelles (vs mois précédent)
+    delay_rate_mom_change Float32,   -- Month-over-Month change
+    flights_mom_change Float32,
     
-    -- Metadata
-    max(processed_at) as last_updated,
-    any(country_code) as country
-    
-FROM flights_silver
-GROUP BY year, month, airport;
-
--- ───────────────────────────────────────────────────────────────
--- GOLD 2: Carrier Performance Summary
--- ───────────────────────────────────────────────────────────────
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS gold_carrier_performance
-ENGINE = SummingMergeTree()
-ORDER BY (year, month, carrier)
-POPULATE
-AS SELECT
-    year,
-    month,
-    carrier,
-    any(carrier_name) as carrier_name,
-    
-    -- Aggregated metrics
-    sum(arr_flights) as total_flights,
-    sum(arr_del15) as total_delayed,
-    sum(arr_cancelled) as total_cancelled,
-    sum(arr_delay) as total_delay_minutes,
-    
-    -- KPIs
-    avg(delay_rate) as avg_delay_rate,
-    avg(cancel_rate) as avg_cancel_rate,
+    -- Comparaisons annuelles (vs même mois année précédente)
+    delay_rate_yoy_change Float32,   -- Year-over-Year change
+    flights_yoy_change Float32,
     
     -- Rankings
-    count(DISTINCT airport) as airports_served,
+    carrier_rank_by_delay UInt16,    -- 1 = meilleur (moins de retards)
+    airport_rank_by_delay UInt16,
     
-    -- Metadata
-    max(processed_at) as last_updated
+    -- Métadonnées
+    created_at DateTime DEFAULT now(),
+    updated_at DateTime DEFAULT now()
     
-FROM flights_silver
-GROUP BY year, month, carrier;
-
--- ───────────────────────────────────────────────────────────────
--- GOLD 3: Monthly Trends (Time Series)
--- ───────────────────────────────────────────────────────────────
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS gold_monthly_trends
-ENGINE = SummingMergeTree()
-ORDER BY (year, month)
-POPULATE
-AS SELECT
-    year,
-    month,
-    
-    -- Volume metrics
-    count() as total_records,
-    sum(arr_flights) as total_flights,
-    sum(arr_del15) as total_delayed,
-    sum(arr_cancelled) as total_cancelled,
-    
-    -- Delay breakdown
-    sum(carrier_delay) as total_carrier_delay,
-    sum(weather_delay) as total_weather_delay,
-    sum(nas_delay) as total_nas_delay,
-    sum(security_delay) as total_security_delay,
-    sum(late_aircraft_delay) as total_late_aircraft_delay,
-    
-    -- Industry-wide KPIs
-    avg(delay_rate) as industry_avg_delay_rate,
-    avg(cancel_rate) as industry_avg_cancel_rate,
-    
-    -- Geographic distribution
-    count(DISTINCT airport) as unique_airports,
-    count(DISTINCT carrier) as unique_carriers,
-    
-    -- Metadata
-    max(processed_at) as last_updated
-    
-FROM flights_silver
-GROUP BY year, month;
-
--- ───────────────────────────────────────────────────────────────
--- GOLD 4: Route Performance (Carrier + Airport pairs)
--- ───────────────────────────────────────────────────────────────
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS gold_route_performance
-ENGINE = AggregatingMergeTree()
-PARTITION BY year
+) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (year, month, carrier, airport)
-POPULATE
-AS SELECT
-    year,
-    month,
-    carrier,
-    airport,
-    any(carrier_name) as carrier_name,
-    any(airport_name) as airport_name,
-    any(state) as state,
+PARTITION BY year
+SETTINGS index_granularity = 8192;
+
+-- ============================================================================
+-- GOLD ML: Features pour Machine Learning
+-- ============================================================================
+-- Objectif: Features engineered pour entraînement XGBoost
+-- Granularité: Par carrier, airport, année, mois
+-- Usage: Training ML, Prédictions
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS gold_ml_features (
+    -- Identifiants
+    carrier String,
+    origin_airport String,
+    year UInt16,
+    month UInt8,
     
-    -- Route metrics
-    sum(arr_flights) as route_flights,
-    sum(arr_del15) as route_delayed,
-    avg(delay_rate) as route_delay_rate,
-    avg(cancel_rate) as route_cancel_rate,
+    -- TARGET (variable à prédire)
+    delay_rate Float32,
     
-    -- For ML features (lag calculations)
-    sum(arr_delay) as route_total_delay,
-    avg(avg_delay_per_flight) as route_avg_delay,
+    -- Features de volume
+    arr_flights UInt32,
+    arr_del15 UInt32,
+    log_flights Float32,             -- log(arr_flights + 1) pour normalisation
     
-    -- Quality
-    avg(data_quality_score) as quality_score,
+    -- Lag Features (historique du couple carrier-airport)
+    pair_lag1 Float32,               -- delay_rate mois M-1
+    pair_lag2 Float32,               -- delay_rate mois M-2
+    pair_lag3 Float32,               -- delay_rate mois M-3
+    pair_lag6 Float32,               -- delay_rate mois M-6
+    pair_lag12 Float32,              -- delay_rate même mois année précédente
     
-    -- Metadata
-    max(processed_at) as last_updated
+    -- Lag Features Carrier (moyenne de la compagnie)
+    carrier_lag1_mean Float32,
+    carrier_lag2_mean Float32,
+    carrier_lag3_mean Float32,
     
-FROM flights_silver
-GROUP BY year, month, carrier, airport;
-
--- ───────────────────────────────────────────────────────────────
--- GOLD 5: Real-time Monitoring (Last 24 hours)
--- ───────────────────────────────────────────────────────────────
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS gold_realtime_stats
-ENGINE = AggregatingMergeTree()
-ORDER BY ingestion_hour
-POPULATE
-AS SELECT
-    toStartOfHour(processed_at) as ingestion_hour,
+    -- Lag Features Airport (moyenne de l'aéroport)
+    airport_lag1 Float32,
+    airport_lag2 Float32,
+    airport_lag3 Float32,
     
-    -- Processing stats
-    count() as records_processed,
-    sum(arr_flights) as flights_ingested,
-    avg(delay_rate) as current_delay_rate,
+    -- Rolling Averages (moyennes mobiles)
+    carrier_rolling_3m Float32,      -- Moyenne 3 derniers mois carrier
+    carrier_rolling_6m Float32,      -- Moyenne 6 derniers mois carrier
+    carrier_rolling_12m Float32,     -- Moyenne 12 derniers mois carrier
+    airport_rolling_3m Float32,
+    airport_rolling_6m Float32,
+    airport_rolling_12m Float32,
+    pair_rolling_3m Float32,
+    pair_rolling_6m Float32,
     
-    -- Data quality
-    avg(data_quality_score) as avg_quality,
-    countIf(data_quality_score < 70) as low_quality_count,
+    -- Features temporelles
+    month_sin Float32,               -- sin(2*pi*month/12) pour cyclicité
+    month_cos Float32,               -- cos(2*pi*month/12)
+    is_summer UInt8,                 -- Juin-Août
+    is_winter UInt8,                 -- Décembre-Février
+    is_holiday_season UInt8,         -- Nov-Dec (Thanksgiving, Noël)
+    is_spring_break UInt8,           -- Mars
     
-    -- Performance
-    max(processed_at) as last_record_time,
-    count(DISTINCT carrier) as active_carriers,
-    count(DISTINCT airport) as active_airports
+    -- Features de tendance
+    carrier_trend_3m Float32,        -- Pente sur 3 mois
+    airport_trend_3m Float32,
     
-FROM flights_silver
-WHERE processed_at >= now() - INTERVAL 24 HOUR
-GROUP BY ingestion_hour;
+    -- Features d'interaction
+    carrier_x_month Float32,         -- Interaction carrier performance × mois
+    airport_x_month Float32,
+    
+    -- Métadonnées
+    feature_version String DEFAULT 'v2',
+    created_at DateTime DEFAULT now()
+    
+) ENGINE = ReplacingMergeTree(created_at)
+ORDER BY (carrier, origin_airport, year, month)
+PARTITION BY year
+SETTINGS index_granularity = 8192;
 
--- ═══════════════════════════════════════════════════════════════
--- HELPER VIEWS FOR API & DASHBOARDS
--- ═══════════════════════════════════════════════════════════════
+-- ============================================================================
+-- ML PREDICTIONS: Résultats des prédictions
+-- ============================================================================
+-- Objectif: Stocker les prédictions du modèle pour 2026
+-- Source: Script train_model_2026.py
+-- Usage: API FastAPI, Dashboard React
+-- ============================================================================
 
--- Latest month snapshot (for current state queries)
-CREATE VIEW IF NOT EXISTS v_latest_month_performance AS
-SELECT
-    carrier,
-    airport,
-    carrier_name,
-    airport_name,
-    state,
-    total_flights,
-    total_delayed,
-    avg_delay_rate,
-    avg_cancel_rate,
-    p90_delay_rate,
-    last_updated
-FROM gold_airport_performance
-WHERE (year, month) = (
-    SELECT year, month 
-    FROM gold_monthly_trends 
-    ORDER BY year DESC, month DESC 
-    LIMIT 1
-)
-ORDER BY total_flights DESC;
+CREATE TABLE IF NOT EXISTS ml_predictions (
+    -- Identifiants
+    carrier String,
+    origin_airport String,
+    year UInt16,
+    month UInt8,
+    
+    -- Prédictions
+    predicted_delay_rate Float32,
+    prediction_lower Float32,        -- Intervalle confiance bas
+    prediction_upper Float32,        -- Intervalle confiance haut
+    
+    -- Score de risque
+    risk_score Float32,              -- 0-1, basé sur predicted_delay_rate
+    risk_category String,            -- 'low', 'medium', 'high'
+    
+    -- Volume estimé
+    arr_flights UInt32,
+    
+    -- Explicabilité (SHAP values)
+    top_feature_1 String,
+    top_feature_1_importance Float32,
+    top_feature_2 String,
+    top_feature_2_importance Float32,
+    top_feature_3 String,
+    top_feature_3_importance Float32,
+    
+    -- Métadonnées modèle
+    model_version String,
+    model_type String DEFAULT 'xgboost',
+    confidence Float32,
+    
+    -- Timestamps
+    prediction_date DateTime DEFAULT now(),
+    created_at DateTime DEFAULT now()
+    
+) ENGINE = ReplacingMergeTree(created_at)
+ORDER BY (carrier, origin_airport, year, month)
+PARTITION BY year
+SETTINGS index_granularity = 8192;
 
--- High-risk routes (for ML predictions API)
-CREATE VIEW IF NOT EXISTS v_high_risk_routes AS
-SELECT
-    carrier,
-    airport,
-    carrier_name,
-    airport_name,
-    state,
-    route_delay_rate,
-    route_flights,
-    'high_risk' as risk_category
-FROM gold_route_performance
-WHERE (year, month) = (
-    SELECT year, month 
-    FROM gold_monthly_trends 
-    ORDER BY year DESC, month DESC 
-    LIMIT 1
-)
-AND route_delay_rate > 0.25
-AND route_flights > 10
-ORDER BY route_delay_rate DESC
-LIMIT 100;
+-- ============================================================================
+-- INDEXES pour performances
+-- ============================================================================
 
--- ═══════════════════════════════════════════════════════════════
--- DATA QUALITY CHECKS
--- ═══════════════════════════════════════════════════════════════
+-- Index pour recherches fréquentes sur silver
+ALTER TABLE silver_flights ADD INDEX idx_silver_carrier carrier TYPE bloom_filter GRANULARITY 1;
+ALTER TABLE silver_flights ADD INDEX idx_silver_airport airport TYPE bloom_filter GRANULARITY 1;
 
-CREATE TABLE IF NOT EXISTS data_quality_log (
-    check_timestamp DateTime DEFAULT now(),
-    check_name String,
-    check_status Enum8('pass' = 0, 'warning' = 1, 'fail' = 2),
-    affected_records UInt32,
-    details String,
-    layer Enum8('bronze' = 0, 'silver' = 1, 'gold' = 2)
-) ENGINE = MergeTree()
-ORDER BY check_timestamp
-TTL check_timestamp + INTERVAL 30 DAY;
+-- Index pour gold_bi
+ALTER TABLE gold_bi ADD INDEX idx_gold_bi_carrier carrier TYPE bloom_filter GRANULARITY 1;
+ALTER TABLE gold_bi ADD INDEX idx_gold_bi_airport airport TYPE bloom_filter GRANULARITY 1;
 
--- ═══════════════════════════════════════════════════════════════
--- COMMENTS & DOCUMENTATION
--- ═══════════════════════════════════════════════════════════════
-
-ALTER TABLE flights_bronze COMMENT 'Bronze layer: Raw data from Kafka with 90-day retention';
-ALTER TABLE flights_silver COMMENT 'Silver layer: Validated, enriched business data';
-ALTER TABLE gold_airport_performance COMMENT 'Gold: Pre-aggregated airport metrics for dashboards';
-ALTER TABLE gold_carrier_performance COMMENT 'Gold: Pre-aggregated carrier metrics for dashboards';
-ALTER TABLE gold_monthly_trends COMMENT 'Gold: Industry-wide monthly trends for analytics';
-ALTER TABLE gold_route_performance COMMENT 'Gold: Carrier-Airport route metrics for ML features';
-ALTER TABLE gold_realtime_stats COMMENT 'Gold: Last 24h monitoring metrics';
-
--- ═══════════════════════════════════════════════════════════════
--- COMPLETED: Medallion Architecture Setup
--- Next Steps:
---   1. Update kafka_to_clickhouse.py → kafka_to_bronze.py
---   2. Create bronze_to_silver.py transformation script
---   3. Update ML pipeline to use gold_route_performance
--- ═══════════════════════════════════════════════════════════════
+-- Index pour predictions
+ALTER TABLE ml_predictions ADD INDEX idx_pred_carrier carrier TYPE bloom_filter GRANULARITY 1;
+ALTER TABLE ml_predictions ADD INDEX idx_pred_airport origin_airport TYPE bloom_filter GRANULARITY 1;
+ALTER TABLE ml_predictions ADD INDEX idx_pred_risk risk_category TYPE set(3) GRANULARITY 1;

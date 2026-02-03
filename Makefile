@@ -1,53 +1,37 @@
-.PHONY: help venv install consumer cache streamlit ml-train ml-train-verbose ml-predict ml-install clean clean-docker
-
-PY?=python3
-VENV?=.venv
-PYTHON:=$(shell if [ -x "$(VENV)/bin/python" ]; then echo "$(VENV)/bin/python"; else echo "$(PY)"; fi)
+.PHONY: help install start stop logs load-data init-db clean
 
 help:
 	@echo "Targets:"
-	@echo "  venv              Create local virtualenv (.venv)"
-	@echo "  install           Install python dependencies"
-	@echo "  ml-install        Install ML dependencies (yno-ml)"
-	@echo "  consumer          Run Kafka->ClickHouse consumer (Script 1)"
-	@echo "  cache             Run ClickHouse->MongoDB cache service (Script 2)"
-	@echo "  ml-train          Run ML training pipeline (Script 3)"
-	@echo "  ml-train-verbose  Run ML training with detailed logs"
-	@echo "  ml-predict        Generate demo predictions (batch)"
-	@echo "  streamlit         Run real-time Streamlit dashboard"
-	@echo "  clean             Remove local envs/caches/logs"
-	@echo "  clean-docker      Stop stack (keeps volumes)"
-
-venv:
-	$(PY) -m venv $(VENV)
-	@echo "Activate with: source $(VENV)/bin/activate"
+	@echo "  install           Install Python dependencies"
+	@echo "  start             Start Docker services"
+	@echo "  stop              Stop Docker services"
+	@echo "  logs              View logs (all services)"
+	@echo "  init-db           Initialize ClickHouse tables"
+	@echo "  load-data         Load historical data"
+	@echo "  clean             Remove Docker volumes"
 
 install:
-	$(VENV)/bin/python -m pip install --upgrade pip
-	$(VENV)/bin/pip install -r requirements.txt
+	pip install -r requirements.txt
+	pip install -r requirements-streamlit.txt
+	cd backend && pip install -r requirements.txt
 
-ml-install:
-	@echo "📦 Installing ML dependencies..."
-	$(VENV)/bin/pip install -r yno-ml/requirements.txt
-	@echo "✅ ML dependencies installed"
+start:
+	docker compose up -d
 
-consumer:
-	$(PYTHON) scripts/kafka_to_clickhouse.py
+stop:
+	docker compose down
 
-cache:
-	$(PYTHON) scripts/clickhouse_to_mongodb.py
+logs:
+	docker compose logs -f
 
-ml-train:
-	@echo "🧠 Training ML model..."
-	$(PYTHON) scripts/ml_training_pipeline.py --skip-predictions
+init-db:
+	docker exec clickhouse clickhouse-client --query "$$(cat config/clickhouse/init.sql)"
 
-ml-train-verbose:
-	@echo "🧠 Training ML model (verbose logging)..."
-	$(PYTHON) scripts/ml_training_pipeline.py --skip-predictions 2>&1 | tee logs/ml_train_$$(date +%Y%m%d_%H%M%S).log
+load-data:
+	python scripts/load_historical_data.py
 
-ml-predict:
-	@echo "🔮 Generating demo predictions..."
-	$(PYTHON) scripts/batch_predictions_demo.py
+clean:
+	docker compose down -v
 
 streamlit:
 	$(PYTHON) -m streamlit run visualization/realtime_app.py --server.port 8501 --server.address 0.0.0.0

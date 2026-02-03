@@ -1,215 +1,195 @@
-# ynov-data-pipeline – Airline Delays Streaming (NiFi → Kafka → ClickHouse → Streamlit)
+# Airline Delay Prediction Platform
 
-This repository contains a real-time data pipeline to generate and stream airline delay data using modern data engineering tools.
+Pipeline de données et Machine Learning pour prédire les retards aériens avec dashboard interactif React.
 
-**Architecture**: NiFi → Kafka → ClickHouse → MongoDB (cache) → Streamlit
+## Architecture
 
-Each streamed JSON record represents aggregated flight observations (not individual flights). Fields like `arr_flights`, `arr_del15`, and cause count fields (`*_ct`) contain aggregated metrics.
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           DATA PIPELINE                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌──────────┐    ┌──────────┐    ┌──────────────┐    ┌──────────────┐    │
+│   │  NiFi    │───▶│  Kafka   │───▶│  ClickHouse  │───▶│   ML API     │    │
+│   │ Ingestion│    │ Streaming│    │   Database   │    │  (FastAPI)   │    │
+│   └──────────┘    └──────────┘    └──────────────┘    └──────────────┘    │
+│       :8080          :9092           :8123               :8001             │
+│                                                             │              │
+│                                                             ▼              │
+│                                      ┌──────────────────────────────────┐  │
+│                                      │        INTERFACES                │  │
+│                                      ├──────────────────────────────────┤  │
+│                                      │  React Dashboard    :3000        │  │
+│                                      │  (Prédictions ML)               │  │
+│                                      │                                  │  │
+│                                      │  Streamlit Realtime :8501        │  │
+│                                      │  (Monitoring Kafka)             │  │
+│                                      └──────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-## Project Structure
+## Stack Technique
 
-- `nifi/flows/`: NiFi flow exports (import in NiFi UI)
-- `data/`: datasets and templates (`Nifi_Templates_1500.csv`, `airports_gps.csv`)
-- `scripts/`: Python utilities (Kafka → ClickHouse consumer)
-- `config/clickhouse/`: ClickHouse schema initialization
-- `visualization/`: Streamlit real-time dashboard
-- `docs/`: architecture documentation
+| Composant | Technologie | Port | Description |
+|-----------|-------------|------|-------------|
+| Database | ClickHouse 23.8 | 8123 | OLAP pour analytics rapides |
+| Cache | MongoDB 7.0 | 27017 | Stockage ML artifacts |
+| Message Broker | Kafka 7.5 | 9092 | Streaming temps réel |
+| Ingestion | NiFi 1.23 | 8080 | ETL visuel |
+| ML API | FastAPI | 8001 | REST API prédictions |
+| Dashboard | React + Vite | 3000 | Interface ML |
+| Monitoring | Streamlit | 8501 | Flux Kafka temps réel |
 
-## Quick Start
+## Démarrage Rapide
 
-### 1. Start the Stack
+### 1. Lancer tous les services
 
 ```bash
 docker compose up -d
 ```
 
-This starts: Zookeeper, Kafka, NiFi, Kafka-UI, ClickHouse, MongoDB, and Streamlit dashboard.
-
-### 2. Run Cache Service (ClickHouse → MongoDB)
-
-The cache service periodically extracts aggregations from ClickHouse and stores them in MongoDB for fast dashboard queries:
+### 2. Vérifier les services
 
 ```bash
-python scripts/clickhouse_to_mongodb.py
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-Or let Docker handle it (recommended):
-```bash
-docker compose up -d
+### 3. Accéder aux interfaces
+
+| Interface | URL |
+|-----------|-----|
+| Dashboard ML (React) | http://localhost:3000 |
+| Monitoring Temps Réel | http://localhost:8501 |
+| API Documentation | http://localhost:8001/docs |
+| NiFi | http://localhost:8080 |
+
+## Structure du Projet
+
+```
+├── ml_api/                 # API FastAPI (prédictions ML)
+│   ├── app.py              # Point d'entrée API
+│   └── utils/              # Utilitaires
+│
+├── ml_ui/                  # Dashboard React
+│   ├── src/
+│   │   ├── App.jsx         # Application principale
+│   │   ├── api.js          # Client API
+│   │   └── styles.css      # Styles
+│   └── package.json
+│
+├── scripts/                # Scripts de traitement
+│   ├── build_gold_features.py   # Pipeline Medallion
+│   ├── train_model_2026.py      # Entraînement ML
+│   ├── load_historical_data.py  # Chargement CSV
+│   └── kafka_to_clickhouse.py   # Consumer Kafka
+│
+├── config/                 # Configurations
+│   └── clickhouse/
+│       └── init.sql        # Schéma BDD
+│
+├── data/                   # Données source
+│   ├── Airline_Delay_Cause_Cpt.csv
+│   └── airports_gps.csv
+│
+├── nifi/                   # Flows NiFi
+│   └── flows/
+│
+├── docs/                   # Documentation
+│   ├── ARCHITECTURE.md
+│   ├── ML_COMPREHENSIVE_GUIDE.md
+│   └── ...
+│
+├── realtime_app.py         # App Streamlit monitoring
+├── docker-compose.yml      # Orchestration services
+├── requirements-ml-api.txt # Dépendances API
+└── Makefile                # Commandes utiles
 ```
 
-### 3. Import NiFi Flow
+## API Endpoints
 
-- Open NiFi at http://localhost:8080 (credentials: `admin` / `adminadminadmin`)
-- Import `nifi/flows/streaming_flow.json`
-- Verify Kafka broker: `kafka:29092`
-- Start the flow
+| Méthode | Endpoint | Description |
+|---------|----------|-------------|
+| GET | `/health` | Santé de l'API |
+| GET | `/stats/summary` | Statistiques globales |
+| GET | `/predictions` | Liste des prédictions |
+| GET | `/explainability/global` | Feature importance |
+| GET | `/explainability/route` | Analyse par route |
+| GET | `/monitoring` | Métriques monitoring |
+| GET | `/metadata` | Carriers et airports |
+| GET | `/stats/monthly` | Stats mensuelles |
 
-### 4. Run Kafka → ClickHouse Consumer (Optional - can run via Docker)
-
-```bash
-python scripts/kafka_to_clickhouse.py
-```
-
-### 5. Access Dashboards
-
-- **Streamlit Dashboard**: http://localhost:8501 (real-time analytics + Kafka feed)
-- **Kafka UI**: http://localhost:8081 (monitor topics and messages)
-- **ClickHouse**: http://localhost:8123/play (SQL playground)
-- **MongoDB**: localhost:27017 (cached aggregations)
-
-## Real-time Visualization Details
-
-The Streamlit dashboard provides:
-- ClickHouse metrics and historical analysis
-- Live Kafka message consumption with in-memory buffering
-- Persistent buffer across page reloads using `st.cache_resource`
-
-**Kafka Consumer Behavior:**
-- Consumer group: `airline-streamlit-ui-backfill`
-- Offset reset: `earliest` (includes recent backlog)
-- Auto-commit: disabled (prevents offset advancement)
-- Buffer size: 5000 messages (circular deque)
-
-The buffer persists across Streamlit reruns/auto-refresh cycles, providing continuous real-time data visibility.
-
-**Running Streamlit:**
-
-Inside Docker (recommended):
-```bash
-docker compose up -d streamlit
-```
-
-Locally (for development):
-```bash
-python -m streamlit run visualization/realtime_app.py --server.port 8501 --server.address 0.0.0.0
-```
-
-## Documentation
-
-- [Architecture Overview](docs/ARCHITECTURE.md)
-- [Data Loading Strategy](docs/DATA_LOADING.md)
-- **[ML Integration (Script 3)](docs/ML_INTEGRATION.md)** ✨
-- [Runbook](docs/RUNBOOK.md)
-
-## Development
-
-### Local Python Environment
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .\.venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### Using Make Commands
+## Commandes Utiles
 
 ```bash
-make help           # Show available commands
-make venv           # Create virtual environment
-make install        # Install pipeline dependencies
-make ml-install     # Install ML dependencies (yno-ml)
-make consumer       # Run Kafka→ClickHouse consumer (Script 1)
-make cache          # Run ClickHouse→MongoDB cache (Script 2)
-make ml-train       # Run ML training pipeline (Script 3)
-make ml-train-verbose  # Run ML training with detailed logs
-make streamlit      # Run Streamlit dashboard
-make clean          # Clean local caches/logs
-make clean-docker   # Stop Docker stack
+# Status des services
+docker compose ps
+
+# Logs d'un service
+docker compose logs -f ml_api
+
+# Redémarrer un service
+docker compose restart ml_ui
+
+# Arrêter tout
+docker compose down
+
+# Rebuild complet
+docker compose down -v && docker compose up -d --build
 ```
 
-## Tech Stack
-
-- **Apache NiFi**: Data generation and streaming
-- **Apache Kafka**: Message broker
-- **ClickHouse**: OLAP database (348K flight records, 2003-2025)
-- **MongoDB**: Cache layer for pre-computed aggregations + ML predictions
-- **XGBoost**: Machine learning (delay prediction classifier)
-- **Streamlit**: Real-time dashboard
-- **Docker**: Container orchestration
-- **Python**: Data processing, ML training, consumers
-
-## Pipeline Architecture
-
-```
-NiFi → Kafka → ClickHouse → MongoDB (cache) → Streamlit/Power BI
-         ↓           ↓             ↓
-    (Script 1)  (Script 3)    (Script 2)
-    Consumer    ML Training   Cache Service
-```
-
-### Data Flow Scripts
-
-| Script | Source | Destination | Purpose | Frequency |
-|--------|--------|-------------|---------|-----------|
-| **Script 1** | Kafka | ClickHouse | Stream processing | Real-time |
-| **Script 2** | ClickHouse | MongoDB | Dashboard cache | Every 5 min |
-| **Script 3** | ClickHouse | ML Model → MongoDB | Predictive analytics | Daily |
-
-#### Script 3: ML Training Pipeline (NEW ✨)
-
-Adds predictive capabilities to the pipeline:
+## Variables d'Environnement
 
 ```bash
-# Train model and generate predictions
-make ml-train
+# ClickHouse
+CLICKHOUSE_HOST=clickhouse
+CLICKHOUSE_HTTP_PORT=8123
+CLICKHOUSE_DATABASE=airline_data
 
-# Or run manually with options
-python scripts/ml_training_pipeline.py --pred-year 2026 --pred-month 2
+# Kafka
+KAFKA_HOST=kafka
+KAFKA_PORT=29092
+KAFKA_TOPIC=airline-delays
+
+# MongoDB
+MONGODB_URL=mongodb://mongodb:27017
 ```
 
-**What it does:**
-1. Extracts 348K historical records from ClickHouse (2003-2025)
-2. Trains XGBoost classifier to predict high-delay routes (>20% delay rate)
-3. Generates predictions for next month
-4. Saves predictions to MongoDB (`ml_predictions`, `ml_alerts`)
-5. Exports alerts to CSV for Power BI (`reports/ml_alerts_latest.csv`)
+## Développement
 
-**Performance:**
-- ROC-AUC: 0.863
-- Recall: 84.8% @ cutoff 0.17
-- Training time: ~5 minutes on 348K records
-- Predictions: ~800 carrier-airport pairs per month
+### Backend (API)
 
-**Use cases:**
-- Predict which routes will have high delays next month
-- Proactive resource allocation (staff, equipment)
-- Customer communication (warn passengers about delays)
-- Operations planning (schedule adjustments)
+```bash
+cd ml_api
+pip install -r ../requirements-ml-api.txt
+uvicorn app:app --reload --port 8001
+```
 
-📚 **Full ML Documentation**: [docs/ML_INTEGRATION.md](docs/ML_INTEGRATION.md)
+### Frontend (React)
 
-## MongoDB Collections (Cache Layer)
+```bash
+cd ml_ui
+npm install
+npm run dev
+```
 
-Pre-computed aggregations for fast dashboard queries:
-- `airport_performance`: Airport KPIs and delay rates
-- `carrier_performance`: Carrier performance metrics
-- `monthly_trends`: Time series data by month
-- `delay_causes`: Breakdown of delay causes by airport/carrier
-- `top_performers`: Top 10 best/worst airports and carriers
-- **`ml_predictions`** ✨: ML predictions for next month (risk scores)
-- **`ml_alerts`** ✨: High-risk route alerts (prediction=1)
-- **`ml_model_metadata`** ✨: Model performance metrics
+## Machine Learning
 
-The cache updates every 5 minutes (configurable via `CACHE_UPDATE_INTERVAL`).
+Le modèle XGBoost prédit les taux de retard par route (carrier + airport) pour 2026.
 
+- **Train**: 2010-2018 (données historiques)
+- **Test**: 2019-2022 (validation)
+- **Prédiction**: 2026 (12 mois)
 
-| Script | Source | Destination | Frequency |
-|--------|--------|-------------|-----------|
-| Script 1: Consumer | Kafka | ClickHouse | Continu (real-time) |
-| Script 2: Cache | ClickHouse | MongoDB | Périodique (5 min) |
-| Script 3: ML | MongoDB | Modèle sauvegardé | Quotidien |
-- **Python**: Kafka consumer and data processing
+Exécuter le pipeline ML :
 
-## ClickHouse Tables
+```bash
+python scripts/load_historical_data.py
+python scripts/build_gold_features.py
+python scripts/train_model_2026.py
+```
 
-The database includes:
-- `flights`: Main fact table with delay metrics
-- `airports_gps`: Geographic reference data (420 US airports with lat/long)
-- `daily_delay_summary`: Materialized view for daily aggregations
-- `carrier_performance`: Materialized view for carrier metrics
-- `airport_performance`: Materialized view for airport metrics
-- `realtime_stats`: Materialized view for real-time monitoring
+## Ressources
 
-The `airports_gps` table can be joined with `flights` on the `airport` column for Power BI geographic visualizations.
+- Documentation complète: `docs/`
+- Guide ML détaillé: `docs/ML_COMPREHENSIVE_GUIDE.md`
+- Architecture: `docs/ARCHITECTURE.md`
