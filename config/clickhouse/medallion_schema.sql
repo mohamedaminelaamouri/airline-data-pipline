@@ -312,19 +312,3 @@ ORDER BY (carrier, origin_airport, year, month)
 PARTITION BY year
 SETTINGS index_granularity = 8192;
 
--- ============================================================================
--- INDEXES pour performances
--- ============================================================================
-
--- Index pour recherches fréquentes sur silver
-ALTER TABLE silver_flights ADD INDEX idx_silver_carrier carrier TYPE bloom_filter GRANULARITY 1;
-ALTER TABLE silver_flights ADD INDEX idx_silver_airport airport TYPE bloom_filter GRANULARITY 1;
-
--- Index pour gold_bi
-ALTER TABLE gold_bi ADD INDEX idx_gold_bi_carrier carrier TYPE bloom_filter GRANULARITY 1;
-ALTER TABLE gold_bi ADD INDEX idx_gold_bi_airport airport TYPE bloom_filter GRANULARITY 1;
-
--- Index pour predictions
-ALTER TABLE ml_predictions ADD INDEX idx_pred_carrier carrier TYPE bloom_filter GRANULARITY 1;
-ALTER TABLE ml_predictions ADD INDEX idx_pred_airport origin_airport TYPE bloom_filter GRANULARITY 1;
-ALTER TABLE ml_predictions ADD INDEX idx_pred_risk risk_category TYPE set(3) GRANULARITY 1;

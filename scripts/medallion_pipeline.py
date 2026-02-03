@@ -11,6 +11,7 @@ Architecture:
                                                   → gold_ml_features (XGBoost)
 """
 
+import argparse
 import clickhouse_connect
 import pandas as pd
 import numpy as np
@@ -166,8 +167,7 @@ def silver_to_gold_bi():
             total_flights, delayed_flights, delay_rate, on_time_rate,
             carrier_delay_pct, weather_delay_pct, nas_delay_pct,
             security_delay_pct, late_aircraft_delay_pct,
-            cancelled_flights, diverted_flights, cancel_rate, divert_rate,
-            total_delay_minutes, avg_delay_per_flight, avg_delay_per_delayed
+            cancelled_flights, diverted_flights, cancel_rate, divert_rate
         )
         SELECT
             carrier,
@@ -230,21 +230,7 @@ def silver_to_gold_bi():
             CASE WHEN sum(arr_flights) > 0 
                 THEN sum(arr_diverted) / sum(arr_flights) 
                 ELSE 0 
-            END AS divert_rate,
-            
-            -- Temps de retard
-            sum(arr_delay) AS total_delay_minutes,
-            
-            CASE WHEN sum(arr_flights) > 0 
-                THEN sum(arr_delay) / sum(arr_flights) 
-                ELSE 0 
-            END AS avg_delay_per_flight,
-            
-            CASE WHEN sum(arr_del15) > 0 
-                THEN sum(arr_delay) / sum(arr_del15) 
-                ELSE 0 
-            END AS avg_delay_per_delayed
-            
+            END AS divert_rate
         FROM silver_flights
         GROUP BY carrier, airport, year, month
     """)
@@ -281,22 +267,90 @@ def silver_to_gold_ml():
     
     client.command("DROP TABLE IF EXISTS temp_base_agg")
     client.command("""
-        CREATE TABLE temp_base_agg ENGINE = MergeTree() ORDER BY (carrier, airport, year, month) AS
+        CREATE TABLE temp_base_agg (
+            carrier String,
+            origin_airport String,
+            year UInt16,
+            month UInt8,
+            arr_flights UInt32,
+            arr_del15 UInt32,
+            delay_rate Float32
+        ) ENGINE = MergeTree()
+        ORDER BY (carrier, origin_airport, year, month)
+    """)
+
+    client.command("""
+        INSERT INTO temp_base_agg
         SELECT
             carrier,
-            airport AS origin_airport,
+            airport,
             year,
             month,
-            sum(arr_flights) AS arr_flights,
-            sum(arr_del15) AS arr_del15,
-            CASE WHEN sum(arr_flights) > 0 THEN sum(arr_del15) / sum(arr_flights) ELSE 0 END AS delay_rate
-        FROM silver_flights
-        GROUP BY carrier, airport, year, month
+            arr_flights,
+            arr_del15,
+            CASE WHEN arr_flights > 0 THEN arr_del15 / arr_flights ELSE 0 END AS delay_rate
+        FROM (
+            SELECT
+                carrier,
+                airport,
+                year,
+                month,
+                sum(arr_flights) AS arr_flights,
+                sum(arr_del15) AS arr_del15
+            FROM silver_flights
+            GROUP BY carrier, airport, year, month
+        )
     """)
     
     # Créer les features avec lag
     print("  🔄 Calcul des features lag...")
-    
+
+    client.command("""
+        CREATE TABLE IF NOT EXISTS gold_ml_features (
+            carrier String,
+            origin_airport String,
+            year UInt16,
+            month UInt8,
+            delay_rate Float32,
+            arr_flights UInt32,
+            arr_del15 UInt32,
+            log_flights Float32,
+            pair_lag1 Float32,
+            pair_lag2 Float32,
+            pair_lag3 Float32,
+            pair_lag6 Float32,
+            pair_lag12 Float32,
+            carrier_lag1_mean Float32,
+            carrier_lag2_mean Float32,
+            carrier_lag3_mean Float32,
+            airport_lag1 Float32,
+            airport_lag2 Float32,
+            airport_lag3 Float32,
+            carrier_rolling_3m Float32,
+            carrier_rolling_6m Float32,
+            carrier_rolling_12m Float32,
+            airport_rolling_3m Float32,
+            airport_rolling_6m Float32,
+            airport_rolling_12m Float32,
+            pair_rolling_3m Float32,
+            pair_rolling_6m Float32,
+            month_sin Float32,
+            month_cos Float32,
+            is_summer UInt8,
+            is_winter UInt8,
+            is_holiday_season UInt8,
+            is_spring_break UInt8,
+            carrier_trend_3m Float32,
+            airport_trend_3m Float32,
+            carrier_x_month Float32,
+            airport_x_month Float32,
+            feature_version String DEFAULT 'v2',
+            created_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(created_at)
+        ORDER BY (carrier, origin_airport, year, month)
+        PARTITION BY year
+    """)
+
     client.command("TRUNCATE TABLE gold_ml_features")
     client.command("""
         INSERT INTO gold_ml_features (
@@ -307,80 +361,33 @@ def silver_to_gold_ml():
             is_summer, is_winter, is_holiday_season, is_spring_break
         )
         SELECT
-            t1.carrier,
-            t1.origin_airport,
-            t1.year,
-            t1.month,
-            t1.delay_rate,
-            t1.arr_flights,
-            t1.arr_del15,
-            log(t1.arr_flights + 1) AS log_flights,
+            carrier,
+            origin_airport,
+            year,
+            month,
+            delay_rate,
+            arr_flights,
+            arr_del15,
+            log(arr_flights + 1) AS log_flights,
             
             -- Lag features (mois précédents)
-            COALESCE(
-                (SELECT delay_rate FROM temp_base_agg t2 
-                 WHERE t2.carrier = t1.carrier AND t2.origin_airport = t1.origin_airport
-                 AND (t2.year * 12 + t2.month) = (t1.year * 12 + t1.month - 1)),
-                t1.delay_rate
-            ) AS pair_lag1,
-            
-            COALESCE(
-                (SELECT delay_rate FROM temp_base_agg t2 
-                 WHERE t2.carrier = t1.carrier AND t2.origin_airport = t1.origin_airport
-                 AND (t2.year * 12 + t2.month) = (t1.year * 12 + t1.month - 2)),
-                t1.delay_rate
-            ) AS pair_lag2,
-            
-            COALESCE(
-                (SELECT delay_rate FROM temp_base_agg t2 
-                 WHERE t2.carrier = t1.carrier AND t2.origin_airport = t1.origin_airport
-                 AND (t2.year * 12 + t2.month) = (t1.year * 12 + t1.month - 3)),
-                t1.delay_rate
-            ) AS pair_lag3,
-            
-            COALESCE(
-                (SELECT delay_rate FROM temp_base_agg t2 
-                 WHERE t2.carrier = t1.carrier AND t2.origin_airport = t1.origin_airport
-                 AND (t2.year * 12 + t2.month) = (t1.year * 12 + t1.month - 6)),
-                t1.delay_rate
-            ) AS pair_lag6,
-            
-            COALESCE(
-                (SELECT delay_rate FROM temp_base_agg t2 
-                 WHERE t2.carrier = t1.carrier AND t2.origin_airport = t1.origin_airport
-                 AND (t2.year * 12 + t2.month) = (t1.year * 12 + t1.month - 12)),
-                t1.delay_rate
-            ) AS pair_lag12,
+            ifNull(lagInFrame(delay_rate, 1) OVER w, delay_rate) AS pair_lag1,
+            ifNull(lagInFrame(delay_rate, 2) OVER w, delay_rate) AS pair_lag2,
+            ifNull(lagInFrame(delay_rate, 3) OVER w, delay_rate) AS pair_lag3,
+            ifNull(lagInFrame(delay_rate, 6) OVER w, delay_rate) AS pair_lag6,
+            ifNull(lagInFrame(delay_rate, 12) OVER w, delay_rate) AS pair_lag12,
             
             -- Features cycliques pour le mois
-            sin(2 * pi() * t1.month / 12) AS month_sin,
-            cos(2 * pi() * t1.month / 12) AS month_cos,
+            sin(2 * pi() * month / 12) AS month_sin,
+            cos(2 * pi() * month / 12) AS month_cos,
             
             -- Features saisonnières
-            CASE WHEN t1.month IN (6, 7, 8) THEN 1 ELSE 0 END AS is_summer,
-            CASE WHEN t1.month IN (12, 1, 2) THEN 1 ELSE 0 END AS is_winter,
-            CASE WHEN t1.month IN (11, 12) THEN 1 ELSE 0 END AS is_holiday_season,
-            CASE WHEN t1.month = 3 THEN 1 ELSE 0 END AS is_spring_break
-            
-        FROM temp_base_agg t1
-    """)
-    
-    # Calculer les moyennes carrier et airport
-    print("  📊 Calcul des rolling averages...")
-    
-    client.command("""
-        ALTER TABLE gold_ml_features UPDATE
-            carrier_lag1_mean = (
-                SELECT avg(delay_rate) FROM temp_base_agg t2 
-                WHERE t2.carrier = gold_ml_features.carrier 
-                AND (t2.year * 12 + t2.month) = (gold_ml_features.year * 12 + gold_ml_features.month - 1)
-            ),
-            airport_lag1 = (
-                SELECT avg(delay_rate) FROM temp_base_agg t2 
-                WHERE t2.origin_airport = gold_ml_features.origin_airport 
-                AND (t2.year * 12 + t2.month) = (gold_ml_features.year * 12 + gold_ml_features.month - 1)
-            )
-        WHERE 1=1
+            CASE WHEN month IN (6, 7, 8) THEN 1 ELSE 0 END AS is_summer,
+            CASE WHEN month IN (12, 1, 2) THEN 1 ELSE 0 END AS is_winter,
+            CASE WHEN month IN (11, 12) THEN 1 ELSE 0 END AS is_holiday_season,
+            CASE WHEN month = 3 THEN 1 ELSE 0 END AS is_spring_break
+        FROM temp_base_agg
+        WINDOW w AS (PARTITION BY carrier, origin_airport ORDER BY year, month)
     """)
     
     # Nettoyer
@@ -409,12 +416,21 @@ def silver_to_gold_ml():
 # MAIN
 # ============================================================================
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Medallion pipeline")
+    parser.add_argument(
+        "--silver-only",
+        action="store_true",
+        help="Rafraîchir uniquement Bronze → Silver (sans Gold)",
+    )
+    args = parser.parse_args()
+
     start = datetime.now()
     
     try:
         bronze_to_silver()
-        silver_to_gold_bi()
-        silver_to_gold_ml()
+        if not args.silver_only:
+            silver_to_gold_bi()
+            silver_to_gold_ml()
         
         elapsed = (datetime.now() - start).total_seconds()
         
@@ -423,14 +439,19 @@ if __name__ == "__main__":
         print("=" * 80)
         print(f"   Temps total: {elapsed:.1f} secondes")
         print("\n   Tables créées:")
-        
-        for table in ['bronze_flights', 'silver_flights', 'gold_bi', 'gold_ml_features']:
+
+        tables = ['bronze_flights', 'silver_flights']
+        if not args.silver_only:
+            tables += ['gold_bi', 'gold_ml_features']
+
+        for table in tables:
             count = client.command(f"SELECT count() FROM {table}")
             print(f"   • {table}: {count:,} lignes")
         
-        print("\n   Prochaines étapes:")
-        print("   1. Power BI: Connecter à la table 'gold_bi'")
-        print("   2. ML: Exécuter 'python scripts/train_model_2026.py'")
+        if not args.silver_only:
+            print("\n   Prochaines étapes:")
+            print("   1. Power BI: Connecter à la table 'gold_bi'")
+            print("   2. ML: Exécuter 'python scripts/train_model_2026.py'")
         
     except Exception as e:
         print(f"\n❌ ERREUR: {e}")

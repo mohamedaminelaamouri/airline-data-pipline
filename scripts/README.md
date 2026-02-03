@@ -23,23 +23,29 @@ Ce dossier contient les scripts de traitement de données et d'entraînement ML.
 
 | Script | Description | Usage |
 |--------|-------------|-------|
-| `medallion_pipeline.py` | Pipeline complet Bronze → Silver → Gold | `python scripts/medallion_pipeline.py` |
-| `train_model_2026.py` | Entraînement XGBoost et prédictions 2026 | `python scripts/train_model_2026.py` |
 | `load_historical_data.py` | Chargement des données CSV dans ClickHouse | `python scripts/load_historical_data.py` |
+| `load_airports_gps.py` | Chargement des coordonnées GPS des aéroports | `python scripts/load_airports_gps.py` |
+| `build_gold_features.py` | Pipeline Bronze → Silver → Gold (features) | `python scripts/build_gold_features.py` |
+| `train_model_2026.py` | Entraînement XGBoost et prédictions 2026 | `python scripts/train_model_2026.py` |
 | `kafka_to_clickhouse.py` | Consumer Kafka → ClickHouse (streaming) | `python scripts/kafka_to_clickhouse.py` |
-| `build_gold_features.py` | (Legacy) Ancien script features | Remplacé par medallion_pipeline.py |
 
 ## Ordre d'exécution
 
 ```bash
-# 1. Charger les données historiques (CSV → bronze_flights)
+# 1. Charger les données historiques (CSV → ClickHouse)
 python scripts/load_historical_data.py
 
-# 2. Pipeline Medallion (Bronze → Silver → Gold)
-python scripts/medallion_pipeline.py
+# 2. Charger les coordonnées GPS des aéroports
+python scripts/load_airports_gps.py
 
-# 3. Entraîner le modèle et générer les prédictions 2026
+# 3. Pipeline Medallion (Bronze → Silver → Gold)
+python scripts/build_gold_features.py
+
+# 4. Entraîner le modèle et générer les prédictions 2026
 python scripts/train_model_2026.py
+
+# 5. (Optionnel) Consumer Kafka pour données temps réel
+python scripts/kafka_to_clickhouse.py
 ```
 
 ## Tables ClickHouse
