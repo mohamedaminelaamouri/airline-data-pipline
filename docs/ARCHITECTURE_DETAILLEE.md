@@ -1,7 +1,7 @@
 # Architecture Détaillée - Airline Data Pipeline
 
-**Date:** 3 Février 2026  
-**Version:** 7.0  
+**Date:** 4 Février 2026  
+**Version:** 8.0  
 **Statut:** Production
 
 ---
@@ -359,40 +359,40 @@ ml_ui/
 
 **Architecture:**
 ```
-realtime_app.py (1428 lignes)
+realtime_app.py (~1100 lignes)
 ├─ Configuration
-├─ Kafka Consumer Thread
+├─ Kafka Consumer Thread (Background)
 ├─ ClickHouse Client
-└─ 5 Onglets UI
+└─ 4 Onglets Professionnels
 ```
 
-**Fonctionnalités:**
+**Fonctionnalités v8.0 (Nouveau):**
 
-1. **Overview**
-   - Métriques ClickHouse (total records, flights, carriers)
-   - Métriques Kafka (messages/min, buffer size)
-   - Status services (ClickHouse, Kafka, NiFi)
+1. **Overview (Dashboard de Santé)**
+   - Métriques globales ClickHouse (records, flights)
+   - Statut HONN\u00caTE des services (dot anim\u00e9 pulse)
+   - D\u00e9tection r\u00e9elle Kafka (Thread check + Message age check)
 
-2. **Kafka Live Messages**
-   - Cards des derniers messages Kafka
-   - Affichage: carrier, airport, flights, delays
-   - Auto-scroll
-   - Limit: 50 derniers messages
+2. **Predictive Insights (Nouveau)**
+   - Dashboard de pr\u00e9dictions 2026
+   - KPI Cards: Taux de retard pr\u00e9dit, Co\u00fbt impact, Confidence
+   - Graphique: 2026 Monthly Forecast (Plotly)
+   - Table: High Risk Routes
 
-3. **Kafka Stats**
-   - Graphique messages/min (30 dernières minutes)
-   - Taux de consommation
-   - Buffer usage (gauge)
+3. **Real-time Kafka (Conditionnel)**
+   - S'affiche uniquement si Kafka est ONLINE
+   - Flow de messages live avec cards stylis\u00e9es
+   - Uptime et m\u00e9triques de d\u00e9bit
 
-4. **ClickHouse Data**
-   - Graphiques évolution temporelle
-   - Distribution carriers/airports
-   - Top 10 routes à risque
+4. **Analytics Historiques**
+   - Exploration des donn\u00e9es 2003-2022
+   - Top Carriers & Airports par delay rate
+   - Trends mensuels
 
-5. **Status & Logs**
-   - État détaillé des services
-   - Logs thread Kafka
-   - Uptime consumer
+**Am\u00e9liorations Design:**
+- **Th\u00e8me:** Palette Violet/Indigo (Glassmorphism)
+- **Status Badge:** Honn\u00eate (ne montre plus "Online" si Kafka est bloqu\u00e9)
+- **Performance:** Cache intelligent `@st.cache_resource` pour les threads
 
 **Thread Kafka Background:**
 - Threading daemon en background
