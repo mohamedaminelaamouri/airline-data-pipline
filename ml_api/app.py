@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
-from ml_api.utils.clickhouse_client import query_df
+from utils.clickhouse_client import query_df
 
 app = FastAPI(title="ML Dashboard API", version="1.0")
 
