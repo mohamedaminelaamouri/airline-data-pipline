@@ -299,145 +299,181 @@ def kafka_messages_per_minute(buffer: Deque[KafkaEvent], window_minutes: int = 1
 st.markdown("""
 <style>
     :root {
-        --primary: #6366f1;
-        --primary-light: #818cf8;
+        --primary: #7c3aed;
+        --primary-light: #a78bfa;
+        --primary-dark: #5b21b6;
         --success: #10b981;
         --warning: #f59e0b;
         --danger: #ef4444;
         --info: #3b82f6;
-        --dark: #1e293b;
-        --darker: #0f172a;
-        --light: #f8fafc;
-        --gray: #64748b;
-        --border: #334155;
+        --bg-main: #f5f7fa;
+        --bg-card: #ffffff;
+        --bg-sidebar: #fafbfc;
+        --text-dark: #1f2937;
+        --text-gray: #6b7280;
+        --text-light: #9ca3af;
+        --border: #e5e7eb;
+        --shadow: rgba(0, 0, 0, 0.08);
     }
     
     .stApp {
-        background: linear-gradient(135deg, var(--darker) 0%, var(--dark) 100%);
+        background: var(--bg-main) !important;
+    }
+    
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: var(--bg-sidebar) !important;
+        border-right: 1px solid var(--border);
+    }
+    
+    [data-testid="stSidebar"] * {
+        color: var(--text-dark) !important;
     }
     
     .main-header {
-        background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
-        padding: 2rem;
-        border-radius: 16px;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 40px rgba(99, 102, 241, 0.3);
+        background: linear-gradient(135deg, var(--primary) 0%, #9333ea 100%);
+        padding: 1.5rem 2rem;
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 20px rgba(124, 58, 237, 0.25);
     }
     
     .main-title {
-        font-size: 2.5rem;
-        font-weight: 800;
+        font-size: 2rem;
+        font-weight: 700;
         color: white;
         margin: 0;
     }
     
     .main-subtitle {
-        font-size: 1.1rem;
-        color: rgba(255,255,255,0.85);
-        margin-top: 0.5rem;
+        font-size: 1rem;
+        color: rgba(255,255,255,0.9);
+        margin-top: 0.25rem;
     }
     
     .version-badge {
         display: inline-block;
         background: rgba(255,255,255,0.2);
-        padding: 0.4rem 1rem;
-        border-radius: 20px;
-        font-size: 0.85rem;
+        padding: 0.3rem 0.8rem;
+        border-radius: 16px;
+        font-size: 0.8rem;
         color: white;
-        margin-top: 1rem;
+        margin-top: 0.75rem;
     }
     
     .metric-card {
-        background: linear-gradient(135deg, var(--dark) 0%, #2d3748 100%);
+        background: var(--bg-card);
         border: 1px solid var(--border);
         border-radius: 12px;
-        padding: 1.5rem;
+        padding: 1.25rem;
         text-align: center;
+        box-shadow: 0 2px 8px var(--shadow);
     }
     
     .status-container {
         display: flex;
         flex-direction: column;
-        gap: 0.75rem;
+        gap: 0.5rem;
     }
     
     .status-row {
         display: flex;
         align-items: center;
         gap: 0.75rem;
-        padding: 0.75rem 1rem;
-        background: rgba(255,255,255,0.05);
+        padding: 0.6rem 0.8rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
         border-radius: 8px;
     }
     
     .status-dot {
-        width: 12px;
-        height: 12px;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
     }
     
     .status-dot.online {
         background: var(--success);
-        box-shadow: 0 0 8px var(--success);
+        box-shadow: 0 0 6px var(--success);
     }
     
     .status-dot.warning {
         background: var(--warning);
-        box-shadow: 0 0 8px var(--warning);
+        box-shadow: 0 0 6px var(--warning);
     }
     
     .status-dot.offline {
         background: var(--danger);
-        box-shadow: 0 0 8px var(--danger);
+        box-shadow: 0 0 6px var(--danger);
     }
     
     .status-name {
-        font-size: 0.9rem;
-        color: var(--light);
+        font-size: 0.85rem;
+        color: var(--text-dark);
     }
     
     .section-title {
-        font-size: 1.3rem;
+        font-size: 1.2rem;
         font-weight: 600;
-        color: var(--light);
+        color: var(--text-dark);
         margin-bottom: 1rem;
         padding-bottom: 0.5rem;
         border-bottom: 2px solid var(--primary);
     }
     
+    /* Metric cards override for Streamlit */
+    [data-testid="stMetric"] {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 2px 8px var(--shadow);
+    }
+    
+    [data-testid="stMetric"] label {
+        color: var(--text-gray) !important;
+    }
+    
+    [data-testid="stMetric"] [data-testid="stMetricValue"] {
+        color: var(--text-dark) !important;
+    }
+    
     /* Realtime specific */
     .rt-metric-box {
-        padding: 16px;
+        padding: 1rem;
         border-radius: 12px;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.1);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
         text-align: center;
+        box-shadow: 0 2px 8px var(--shadow);
     }
     
     .rt-metric-label {
         font-size: 0.85rem;
-        color: #9ca3af;
+        color: var(--text-gray);
     }
     
     .rt-metric-value {
-        font-size: 1.8rem;
+        font-size: 1.6rem;
         font-weight: 700;
-        margin-top: 8px;
+        margin-top: 6px;
+        color: var(--text-dark);
     }
     
     .rt-status-box {
-        padding: 12px;
+        padding: 10px;
         border-radius: 10px;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.1);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
     }
     
     .kafka-message-card {
-        background: linear-gradient(135deg, #1a1f2e 0%, #252b3b 100%);
+        background: var(--bg-card);
         border: 1px solid var(--border);
         border-radius: 10px;
         padding: 1rem;
         margin-bottom: 0.5rem;
+        box-shadow: 0 1px 4px var(--shadow);
     }
     
     .kafka-msg-header {
@@ -448,12 +484,12 @@ st.markdown("""
     
     .kafka-msg-carrier {
         font-weight: 700;
-        color: var(--primary-light);
+        color: var(--primary);
     }
     
     .kafka-msg-time {
         font-size: 0.8rem;
-        color: var(--gray);
+        color: var(--text-light);
     }
     
     .kafka-msg-stats {
@@ -467,17 +503,17 @@ st.markdown("""
         text-align: center;
         padding: 4px;
         border-radius: 6px;
-        background: rgba(255,255,255,0.03);
+        background: var(--bg-main);
     }
     
     .kafka-msg-stat-value {
         font-weight: 600;
-        color: var(--light);
+        color: var(--text-dark);
     }
     
     .kafka-msg-stat-label {
         font-size: 0.7rem;
-        color: var(--gray);
+        color: var(--text-gray);
     }
     
     @keyframes pulse {
@@ -490,7 +526,7 @@ st.markdown("""
         display: inline-flex;
         align-items: center;
         gap: 0.5rem;
-        background: rgba(239, 68, 68, 0.2);
+        background: rgba(239, 68, 68, 0.1);
         padding: 0.25rem 0.75rem;
         border-radius: 20px;
         font-size: 0.8rem;
@@ -510,29 +546,241 @@ st.markdown("""
         overflow-y: auto;
         padding-right: 0.5rem;
     }
+    
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        background: var(--bg-card);
+        border-radius: 10px;
+        padding: 4px;
+        gap: 4px;
+        border: 1px solid var(--border);
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        color: var(--text-dark) !important;
+        border-radius: 8px;
+        background: transparent !important;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: var(--primary) !important;
+        color: white !important;
+    }
+    
+    /* DataFrames - Force light theme */
+    .stDataFrame, [data-testid="stDataFrame"] {
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: 10px !important;
+    }
+    
+    .stDataFrame table, [data-testid="stDataFrame"] table {
+        background: var(--bg-card) !important;
+    }
+    
+    .stDataFrame th, [data-testid="stDataFrame"] th {
+        background: var(--bg-main) !important;
+        color: var(--text-dark) !important;
+        border-bottom: 2px solid var(--border) !important;
+    }
+    
+    .stDataFrame td, [data-testid="stDataFrame"] td {
+        background: var(--bg-card) !important;
+        color: var(--text-dark) !important;
+        border-bottom: 1px solid var(--border) !important;
+    }
+    
+    .stDataFrame tr:hover td, [data-testid="stDataFrame"] tr:hover td {
+        background: var(--bg-main) !important;
+    }
+    
+    /* Glide Data Grid override for tables */
+    [data-testid="stDataFrame"] > div {
+        background: var(--bg-card) !important;
+    }
+    
+    .dvn-scroller {
+        background: var(--bg-card) !important;
+    }
+    
+    /* SelectBox / Dropdowns */
+    [data-testid="stSelectbox"], .stSelectbox {
+        background: var(--bg-card) !important;
+    }
+    
+    [data-testid="stSelectbox"] > div > div,
+    .stSelectbox > div > div {
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border) !important;
+        color: var(--text-dark) !important;
+    }
+    
+    [data-baseweb="select"] {
+        background: var(--bg-card) !important;
+    }
+    
+    [data-baseweb="select"] > div {
+        background: var(--bg-card) !important;
+        border-color: var(--border) !important;
+        color: var(--text-dark) !important;
+    }
+    
+    [data-baseweb="popover"] {
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border) !important;
+    }
+    
+    [data-baseweb="menu"] {
+        background: var(--bg-card) !important;
+    }
+    
+    [data-baseweb="menu"] li {
+        background: var(--bg-card) !important;
+        color: var(--text-dark) !important;
+    }
+    
+    [data-baseweb="menu"] li:hover {
+        background: var(--bg-main) !important;
+    }
+    
+    /* Input labels */
+    .stSelectbox label, .stTextInput label, .stNumberInput label,
+    [data-testid="stWidgetLabel"] {
+        color: var(--text-dark) !important;
+    }
+    
+    /* Text inputs */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input {
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border) !important;
+        color: var(--text-dark) !important;
+    }
+    
+    /* Checkbox */
+    .stCheckbox label {
+        color: var(--text-dark) !important;
+    }
+    
+    /* Slider */
+    .stSlider label {
+        color: var(--text-dark) !important;
+    }
+    
+    /* Charts container */
+    [data-testid="stPlotlyChart"] {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 2px 8px var(--shadow);
+    }
+    
+    /* Main content text */
+    .stMarkdown, .stMarkdown p, .stMarkdown span {
+        color: var(--text-dark) !important;
+    }
+    
+    /* Headers */
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--text-dark) !important;
+    }
+    
+    /* Info, Warning, Error boxes */
+    .stAlert {
+        border-radius: 8px !important;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background: var(--bg-card) !important;
+        color: var(--text-dark) !important;
+    }
+    
+    /* Main container */
+    [data-testid="stMainBlockContainer"] {
+        background: var(--bg-main) !important;
+    }
+    
+    /* Section titles fix */
+    .section-title {
+        color: var(--text-dark) !important;
+    }
+    
+    /* Force all text dark */
+    p, span, div {
+        color: inherit;
+    }
+    
+    /* Override any dark mode remnants */
+    [data-testid="stAppViewContainer"] {
+        background: var(--bg-main) !important;
+    }
+    
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: var(--bg-main);
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: var(--text-light);
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--text-gray);
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # =============================================================================
 # DATABASE CONNECTION
 # =============================================================================
-def get_clickhouse_client():
-    try:
-        client = clickhouse_connect.get_client(
-            host=CLICKHOUSE_HOST,
-            port=CLICKHOUSE_PORT,
-            database=CLICKHOUSE_DB,
-            connect_timeout=10,
-        )
-        return client
-    except Exception as e:
-        logger.error(f"ClickHouse connection error: {e}")
-        return None
+_clickhouse_client_cache = None
+
+def get_clickhouse_client(force_new=False):
+    """Get ClickHouse client with connection retry logic."""
+    global _clickhouse_client_cache
+    
+    # Use cached client if available and not forcing new connection
+    if _clickhouse_client_cache is not None and not force_new:
+        try:
+            # Test if connection is still alive
+            _clickhouse_client_cache.query("SELECT 1")
+            return _clickhouse_client_cache
+        except:
+            _clickhouse_client_cache = None
+    
+    # Try to create new connection with retry
+    for attempt in range(3):
+        try:
+            client = clickhouse_connect.get_client(
+                host=CLICKHOUSE_HOST,
+                port=CLICKHOUSE_PORT,
+                database=CLICKHOUSE_DB,
+                connect_timeout=5,
+            )
+            # Test connection
+            client.query("SELECT 1")
+            _clickhouse_client_cache = client
+            logger.info(f"ClickHouse connected successfully on attempt {attempt + 1}")
+            return client
+        except Exception as e:
+            logger.warning(f"ClickHouse connection attempt {attempt + 1} failed: {e}")
+            time.sleep(1)  # Wait 1 second before retry
+    
+    logger.error("ClickHouse connection failed after 3 attempts")
+    return None
 
 # =============================================================================
 # DATA LOADING
 # =============================================================================
-@st.cache_data(ttl=60)
+# Note: Pas de cache ici pour toujours avoir des donnees fraiches
 def load_metrics() -> Metrics:
     client = get_clickhouse_client()
     if not client:
@@ -828,7 +1076,7 @@ def create_monthly_chart(data: pd.DataFrame) -> go.Figure:
     if data.empty:
         fig = go.Figure()
         fig.add_annotation(text="Pas de donnees", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
-        fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=450)
+        fig.update_layout(template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=450)
         return fig
     
     monthly_agg = data.groupby('month').agg({
@@ -878,7 +1126,7 @@ def create_monthly_chart(data: pd.DataFrame) -> go.Figure:
                   annotation_text="Seuil 15%", annotation_position="right", row=2, col=1)
     
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         height=550, barmode='stack',
         legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="center", x=0.5,
                     bgcolor='rgba(0,0,0,0.3)', bordercolor='#334155', borderwidth=1),
@@ -908,7 +1156,7 @@ def create_carrier_chart(data: pd.DataFrame) -> go.Figure:
     ))
     
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         height=400, yaxis=dict(categoryorder='total ascending'), xaxis_title="Taux de retard (%)",
     )
     return fig
@@ -927,7 +1175,7 @@ def create_airport_chart(data: pd.DataFrame) -> go.Figure:
     ))
     
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         height=400, yaxis=dict(categoryorder='total ascending'), xaxis_title="Taux de retard (%)",
     )
     return fig
@@ -946,7 +1194,7 @@ def create_delay_causes_chart(data: pd.DataFrame) -> go.Figure:
     ))
     
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         height=400, showlegend=False,
     )
     return fig
@@ -1236,9 +1484,9 @@ def main():
                     rt_stats, x="ingestion_minute", y="record_count",
                     title="Records Injectes par Minute",
                 )
-                fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', 
+                fig.update_layout(template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', 
                                   plot_bgcolor='rgba(0,0,0,0)', height=350)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="rt_records_chart")
             
             with col2:
                 if 'avg_delay_rate' in rt_stats.columns:
@@ -1247,9 +1495,9 @@ def main():
                         title="Taux de Retard Moyen par Minute", markers=True,
                     )
                     fig.update_yaxes(tickformat=".1%")
-                    fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', 
+                    fig.update_layout(template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', 
                                       plot_bgcolor='rgba(0,0,0,0)', height=350)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="rt_delay_chart")
         else:
             # Stats de base
             st.info("Vue materialisee 'realtime_stats' non disponible. Affichage des stats de base.")
@@ -1269,7 +1517,7 @@ def main():
         with col1:
             st.markdown('<p class="section-title">Top Compagnies</p>', unsafe_allow_html=True)
             carrier_data = load_carrier_data(selected_year)
-            st.plotly_chart(create_carrier_chart(carrier_data), use_container_width=True)
+            st.plotly_chart(create_carrier_chart(carrier_data), use_container_width=True, key="carrier_chart")
             
             if not carrier_data.empty:
                 worst = carrier_data.nlargest(3, 'delay_rate')
@@ -1278,7 +1526,7 @@ def main():
         with col2:
             st.markdown('<p class="section-title">Top Aeroports</p>', unsafe_allow_html=True)
             airport_data = load_airport_data(selected_year)
-            st.plotly_chart(create_airport_chart(airport_data), use_container_width=True)
+            st.plotly_chart(create_airport_chart(airport_data), use_container_width=True, key="airport_chart")
             
             if not airport_data.empty:
                 worst = airport_data.nlargest(3, 'delay_rate')
@@ -1295,9 +1543,9 @@ def main():
                 color_continuous_scale='RdYlGn_r', hover_name='carrier',
                 labels={'flights': 'Nombre de vols', 'delay_rate': 'Taux de retard'},
             )
-            fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', 
+            fig.update_layout(template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', 
                               plot_bgcolor='rgba(0,0,0,0)', height=500)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="scatter_chart")
         
         monthly_data = load_monthly_data(selected_year)
         if not monthly_data.empty and 'year' in monthly_data.columns:
@@ -1311,9 +1559,9 @@ def main():
                 text=[[f"{v:.1f}%" if not np.isnan(v) else "" for v in row] for row in pivot.values],
                 texttemplate="%{text}",
             ))
-            fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', 
+            fig.update_layout(template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', 
                               plot_bgcolor='rgba(0,0,0,0)', height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="heatmap_chart")
     
     # TAB 4: Donnees
     with tab4:
