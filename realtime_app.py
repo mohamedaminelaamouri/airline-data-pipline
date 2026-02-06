@@ -1088,24 +1088,30 @@ def load_realtime_stats() -> pd.DataFrame:
     except:
         pass
     
-    # Fallback: compter les records recents
+    # Fallback: statistiques détaillées par année/mois
     try:
         result = client.query("""
             SELECT 
-                count() as total,
-                max(year) as latest_year,
-                max(month) as latest_month
+                year,
+                month,
+                count() as records,
+                sum(arr_flights) as flights,
+                sum(arr_del15) as delayed,
+                avg(CASE WHEN arr_flights > 0 THEN arr_del15 / arr_flights ELSE 0 END) as delay_rate
             FROM flights
+            GROUP BY year, month
+            ORDER BY year DESC, month DESC
+            LIMIT 24
         """)
         if result.result_rows:
-            row = result.result_rows[0]
-            return pd.DataFrame({
-                'total': [row[0]],
-                'latest_year': [row[1]],
-                'latest_month': [row[2]]
-            })
-    except:
-        pass
+            df = pd.DataFrame(
+                result.result_rows,
+                columns=['year', 'month', 'records', 'flights', 'delayed', 'delay_rate']
+            )
+            df['period'] = df['year'].astype(str) + '-' + df['month'].astype(str).str.zfill(2)
+            return df
+    except Exception as e:
+        logger.error(f"Error in realtime stats fallback: {e}")
     
     return pd.DataFrame()
 
@@ -1553,37 +1559,113 @@ def main():
         st.markdown("### Statistiques d'Ingestion ClickHouse")
         
         rt_stats = load_realtime_stats()
-        if not rt_stats.empty and 'ingestion_minute' in rt_stats.columns:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                fig = px.area(
-                    rt_stats, x="ingestion_minute", y="record_count",
-                    title="Records Injectes par Minute",
-                )
-                fig.update_layout(template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', 
-                                  plot_bgcolor='rgba(0,0,0,0)', height=350)
-                st.plotly_chart(fig, use_container_width=True, key="rt_records_chart")
-            
-            with col2:
-                if 'avg_delay_rate' in rt_stats.columns:
-                    fig = px.line(
-                        rt_stats, x="ingestion_minute", y="avg_delay_rate",
-                        title="Taux de Retard Moyen par Minute", markers=True,
+        if not rt_stats.empty:
+            if 'ingestion_minute' in rt_stats.columns:
+                # Vue matérialisée disponible
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig = px.area(
+                        rt_stats, x="ingestion_minute", y="record_count",
+                        title="Records Injectés par Minute",
                     )
-                    fig.update_yaxes(tickformat=".1%")
                     fig.update_layout(template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', 
                                       plot_bgcolor='rgba(0,0,0,0)', height=350)
-                    st.plotly_chart(fig, use_container_width=True, key="rt_delay_chart")
+                    st.plotly_chart(fig, use_container_width=True, key="rt_records_chart")
+                
+                with col2:
+                    if 'avg_delay_rate' in rt_stats.columns:
+                        fig = px.line(
+                            rt_stats, x="ingestion_minute", y="avg_delay_rate",
+                            title="Taux de Retard Moyen par Minute", markers=True,
+                        )
+                        fig.update_yaxes(tickformat=".1%")
+                        fig.update_layout(template="plotly_white", paper_bgcolor='rgba(0,0,0,0)', 
+                                          plot_bgcolor='rgba(0,0,0,0)', height=350)
+                        st.plotly_chart(fig, use_container_width=True, key="rt_delay_chart")
+            
+            elif 'period' in rt_stats.columns:
+                # Stats par période (fallback)
+                st.success(f" **{len(rt_stats):,} périodes** trouvées dans ClickHouse")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    total_records = rt_stats['records'].sum()
+                    st.metric("Records Totaux", f"{total_records:,}")
+                
+                with col2:
+                    total_flights = rt_stats['flights'].sum()
+                    st.metric("Vols Totaux", f"{total_flights:,}")
+                
+                with col3:
+                    avg_delay = rt_stats['delay_rate'].mean()
+                    st.metric("Taux Retard Moyen", f"{avg_delay*100:.1f}%")
+                
+                st.markdown("#### Évolution des Données par Période")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig = px.bar(
+                        rt_stats.sort_values('period'), 
+                        x="period", 
+                        y="records",
+                        title="Records par Période (Année-Mois)",
+                        labels={'records': 'Nombre de Records', 'period': 'Période'}
+                    )
+                    fig.update_layout(
+                        template="plotly_white", 
+                        paper_bgcolor='rgba(0,0,0,0)', 
+                        plot_bgcolor='rgba(0,0,0,0)', 
+                        height=350,
+                        xaxis_tickangle=-45
+                    )
+                    st.plotly_chart(fig, use_container_width=True, key="rt_records_period")
+                
+                with col2:
+                    fig = px.line(
+                        rt_stats.sort_values('period'), 
+                        x="period", 
+                        y="delay_rate",
+                        title="Taux de Retard par Période", 
+                        markers=True,
+                        labels={'delay_rate': 'Taux de Retard', 'period': 'Période'}
+                    )
+                    fig.update_yaxes(tickformat=".1%")
+                    fig.update_layout(
+                        template="plotly_white", 
+                        paper_bgcolor='rgba(0,0,0,0)', 
+                        plot_bgcolor='rgba(0,0,0,0)', 
+                        height=350,
+                        xaxis_tickangle=-45
+                    )
+                    st.plotly_chart(fig, use_container_width=True, key="rt_delay_period")
+                
+                # Tableau des dernières périodes
+                st.markdown("#### Dernières Périodes Injectées")
+                display_df = rt_stats.head(12).copy()
+                display_df['delay_rate'] = (display_df['delay_rate'] * 100).round(2).astype(str) + '%'
+                
+                st.markdown(
+                    display_df[['period', 'records', 'flights', 'delayed', 'delay_rate']].to_html(
+                        index=False,
+                        escape=False,
+                        classes='dataframe'
+                    ),
+                    unsafe_allow_html=True
+                )
+            else:
+                st.info("Données ClickHouse détectées mais format non reconnu.")
         else:
             # Stats de base
-            st.info("Vue materialisee 'realtime_stats' non disponible. Affichage des stats de base.")
+            st.info("Vue matérialisée 'realtime_stats' non disponible. Affichage des stats de base.")
             
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Records ClickHouse", f"{metrics.total_records:,}")
             with col2:
-                st.metric("Periode", f"{metrics.year_min} - {metrics.year_max}")
+                st.metric("Période", f"{metrics.year_min} - {metrics.year_max}")
             with col3:
                 st.metric("Taux Retard Global", f"{metrics.delay_rate*100:.1f}%")
     
@@ -1663,7 +1745,43 @@ def main():
             
             st.markdown(f"**{len(filtered):,} enregistrements**")
             
-            st.dataframe(filtered, use_container_width=True, height=400)
+            # Add aggressive CSS override for tables
+            st.markdown("""
+            <style>
+                table {
+                    width: 100%;
+                    background-color: white !important;
+                    border-collapse: collapse;
+                }
+                table thead tr th {
+                    background-color: #f3f4f6 !important;
+                    color: #1f2937 !important;
+                    font-weight: 600 !important;
+                    padding: 10px !important;
+                    border: 1px solid #e5e7eb !important;
+                    text-align: left !important;
+                }
+                table tbody tr td {
+                    background-color: white !important;
+                    color: #1f2937 !important;
+                    padding: 8px 10px !important;
+                    border: 1px solid #e5e7eb !important;
+                }
+                table tbody tr:hover td {
+                    background-color: #f9fafb !important;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            # Use HTML table for guaranteed visibility
+            st.markdown(
+                filtered.head(400).to_html(
+                    index=False,
+                    escape=False,
+                    classes='dataframe'
+                ),
+                unsafe_allow_html=True
+            )
             
             csv = filtered.to_csv(index=False).encode('utf-8')
             st.download_button(
