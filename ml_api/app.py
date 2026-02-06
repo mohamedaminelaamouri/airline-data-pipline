@@ -1,12 +1,29 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any
+from datetime import datetime
+import uuid
+import logging
+
 try:
     from ml_api.utils.clickhouse_client import query_df
 except ImportError:
     from utils.clickhouse_client import query_df
+
+try:
+    from ml_api.utils.mongodb_client import get_mongo_client
+    from ml_api.utils.ml_inference import get_ml_service, FEATURE_COLUMNS
+except ImportError:
+    from utils.mongodb_client import get_mongo_client
+    from utils.ml_inference import get_ml_service, FEATURE_COLUMNS
+
 import pandas as pd
 import random
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ML Dashboard API", version="1.0")
 
@@ -70,6 +87,411 @@ def generate_mock_predictions(limit=100):
 def health():
     return {"status": "ok"}
 
+
+# =============================================================================
+# PREDICT ENDPOINT - ML Serving Layer
+# =============================================================================
+
+class PredictRequest(BaseModel):
+    """Request model for prediction endpoint."""
+    carrier: str = Field(..., description="Airline carrier code (e.g., 'AA', 'DL')")
+    airport: str = Field(..., description="Airport code (e.g., 'ATL', 'ORD')")
+    month: int = Field(..., ge=1, le=12, description="Month (1-12)")
+    year: int = Field(..., ge=2000, le=2050, description="Year")
+
+
+class PredictResponse(BaseModel):
+    """Response model for prediction endpoint."""
+    request_id: str = Field(..., description="Unique request identifier (UUID)")
+    prediction: float = Field(..., description="Probability of high delay (0-1)")
+    risk_category: str = Field(..., description="Risk classification: low, medium, high, critical")
+    model_version: str = Field(..., description="Model version used for prediction")
+    timestamp: str = Field(..., description="ISO format timestamp")
+    inputs: Dict[str, Any] = Field(..., description="Echo of input parameters")
+
+
+@app.post("/predict", response_model=PredictResponse)
+async def predict(request: PredictRequest):
+    """
+    Run online ML prediction for flight delay risk.
+    
+    This endpoint:
+    1. Validates carrier and airport codes
+    2. Retrieves pre-computed features from MongoDB
+    3. Runs inference using the production XGBoost model
+    4. Stores prediction in MongoDB
+    5. Returns the prediction result
+    
+    **Constraints:**
+    - ClickHouse is NOT used during inference
+    - MongoDB is the sole data source for features
+    """
+    request_id = str(uuid.uuid4())
+    timestamp = datetime.utcnow().isoformat() + "Z"
+    
+    try:
+        # Get services
+        ml_service = get_ml_service()
+        mongo_client = get_mongo_client()
+        
+        # Validate carrier and airport
+        if not ml_service.is_valid_carrier(request.carrier):
+            logger.warning(f"Unknown carrier: {request.carrier}")
+            # Still allow prediction with unknown carrier (encoded as 0)
+        
+        if not ml_service.is_valid_airport(request.airport):
+            logger.warning(f"Unknown airport: {request.airport}")
+            # Still allow prediction with unknown airport (encoded as 0)
+        
+        # Try to get pre-computed features from MongoDB
+        stored_features = mongo_client.get_features(
+            carrier=request.carrier,
+            airport=request.airport,
+            year=request.year,
+            month=request.month
+        )
+        
+        if stored_features:
+            logger.info(f"Found pre-computed features for {request.carrier}/{request.airport}/{request.year}/{request.month}")
+        else:
+            # Try to get latest features for this route to use as baseline
+            latest = mongo_client.get_latest_features_for_route(
+                carrier=request.carrier,
+                airport=request.airport
+            )
+            if latest and "features" in latest:
+                stored_features = latest["features"]
+                logger.info(f"Using latest features from {latest.get('year')}/{latest.get('month')}")
+            else:
+                logger.info("No historical features found, using defaults")
+        
+        # Build complete feature vector
+        features = ml_service.build_features(
+            carrier=request.carrier,
+            airport=request.airport,
+            year=request.year,
+            month=request.month,
+            stored_features=stored_features
+        )
+        
+        # Run prediction
+        prediction, risk_category = ml_service.predict(features)
+        
+        logger.info(
+            f"Prediction: {request.carrier}/{request.airport} {request.year}/{request.month} "
+            f"-> {prediction:.4f} ({risk_category})"
+        )
+        
+        # Store prediction in MongoDB
+        mongo_client.store_prediction(
+            request_id=request_id,
+            carrier=request.carrier,
+            airport=request.airport,
+            year=request.year,
+            month=request.month,
+            prediction=prediction,
+            risk_category=risk_category,
+            model_version=ml_service.model_version,
+            features_used=features
+        )
+        
+        return PredictResponse(
+            request_id=request_id,
+            prediction=round(prediction, 4),
+            risk_category=risk_category,
+            model_version=ml_service.model_version,
+            timestamp=timestamp,
+            inputs={
+                "carrier": request.carrier,
+                "airport": request.airport,
+                "month": request.month,
+                "year": request.year
+            }
+        )
+        
+    except FileNotFoundError as e:
+        logger.error(f"Model not found: {e}")
+        raise HTTPException(status_code=503, detail="ML model not available")
+    except Exception as e:
+        logger.error(f"Prediction error: {e}")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+
+@app.get("/predict/metadata")
+def predict_metadata():
+    """Get metadata for the prediction service: valid carriers, airports, and model info."""
+    try:
+        ml_service = get_ml_service()
+        return {
+            "carriers": ml_service.carriers,
+            "airports": ml_service.airports,
+            "model_version": ml_service.model_version,
+            "cutoff": ml_service.cutoff,
+            "feature_columns": FEATURE_COLUMNS,
+            "status": "ready"
+        }
+    except Exception as e:
+        return {
+            "carriers": MOCK_CARRIERS,
+            "airports": MOCK_AIRPORTS,
+            "model_version": "unavailable",
+            "cutoff": 0.5,
+            "feature_columns": [],
+            "status": f"degraded: {str(e)}"
+        }
+
+
+# =============================================================================
+# BATCH PREDICTION ENDPOINT
+# =============================================================================
+
+class BatchPredictRequest(BaseModel):
+    """Request model for batch predictions."""
+    predictions: list[PredictRequest] = Field(..., max_length=100, description="List of predictions (max 100)")
+
+
+class BatchPredictResponse(BaseModel):
+    """Response model for batch predictions."""
+    batch_id: str
+    total: int
+    successful: int
+    failed: int
+    results: list[PredictResponse]
+    errors: list[Dict[str, Any]]
+    timestamp: str
+
+
+@app.post("/predict/batch", response_model=BatchPredictResponse)
+async def predict_batch(request: BatchPredictRequest):
+    """
+    Run batch ML predictions for multiple carrier/airport/month combinations.
+    
+    Maximum 100 predictions per batch.
+    Each prediction is processed independently.
+    """
+    batch_id = str(uuid.uuid4())
+    timestamp = datetime.utcnow().isoformat() + "Z"
+    
+    results = []
+    errors = []
+    
+    try:
+        ml_service = get_ml_service()
+        mongo_client = get_mongo_client()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Service unavailable: {str(e)}")
+    
+    for idx, pred_request in enumerate(request.predictions):
+        try:
+            request_id = str(uuid.uuid4())
+            
+            # Get features
+            stored_features = mongo_client.get_features(
+                carrier=pred_request.carrier,
+                airport=pred_request.airport,
+                year=pred_request.year,
+                month=pred_request.month
+            )
+            
+            if not stored_features:
+                latest = mongo_client.get_latest_features_for_route(
+                    carrier=pred_request.carrier,
+                    airport=pred_request.airport
+                )
+                if latest and "features" in latest:
+                    stored_features = latest["features"]
+            
+            # Build features and predict
+            features = ml_service.build_features(
+                carrier=pred_request.carrier,
+                airport=pred_request.airport,
+                year=pred_request.year,
+                month=pred_request.month,
+                stored_features=stored_features
+            )
+            
+            prediction, risk_category = ml_service.predict(features)
+            
+            # Store in MongoDB
+            mongo_client.store_prediction(
+                request_id=request_id,
+                carrier=pred_request.carrier,
+                airport=pred_request.airport,
+                year=pred_request.year,
+                month=pred_request.month,
+                prediction=prediction,
+                risk_category=risk_category,
+                model_version=ml_service.model_version,
+                features_used=features
+            )
+            
+            results.append(PredictResponse(
+                request_id=request_id,
+                prediction=round(prediction, 4),
+                risk_category=risk_category,
+                model_version=ml_service.model_version,
+                timestamp=timestamp,
+                inputs={
+                    "carrier": pred_request.carrier,
+                    "airport": pred_request.airport,
+                    "month": pred_request.month,
+                    "year": pred_request.year
+                }
+            ))
+            
+        except Exception as e:
+            errors.append({
+                "index": idx,
+                "inputs": pred_request.dict(),
+                "error": str(e)
+            })
+    
+    logger.info(f"Batch {batch_id}: {len(results)} successful, {len(errors)} failed")
+    
+    return BatchPredictResponse(
+        batch_id=batch_id,
+        total=len(request.predictions),
+        successful=len(results),
+        failed=len(errors),
+        results=results,
+        errors=errors,
+        timestamp=timestamp
+    )
+
+
+# =============================================================================
+# PREDICTION HISTORY ENDPOINTS
+# =============================================================================
+
+class PredictionHistoryItem(BaseModel):
+    """Single prediction history item."""
+    request_id: str
+    carrier: str
+    airport: str
+    year: int
+    month: int
+    prediction: float
+    risk_category: str
+    model_version: str
+    timestamp: str
+
+
+class PredictionHistoryResponse(BaseModel):
+    """Response for prediction history."""
+    total: int
+    page: int
+    page_size: int
+    predictions: list[PredictionHistoryItem]
+
+
+@app.get("/predictions/history", response_model=PredictionHistoryResponse)
+def predictions_history(
+    carrier: Optional[str] = Query(default=None, description="Filter by carrier"),
+    airport: Optional[str] = Query(default=None, description="Filter by airport"),
+    risk_category: Optional[str] = Query(default=None, description="Filter by risk category"),
+    year: Optional[int] = Query(default=None, description="Filter by year"),
+    month: Optional[int] = Query(default=None, description="Filter by month"),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    page_size: int = Query(default=50, ge=1, le=200, description="Items per page")
+):
+    """
+    Get prediction history from MongoDB with optional filters.
+    
+    Supports pagination and filtering by carrier, airport, risk_category, year, month.
+    """
+    try:
+        mongo_client = get_mongo_client()
+        
+        # Build query
+        query = {}
+        if carrier:
+            query["carrier"] = carrier
+        if airport:
+            query["airport"] = airport
+        if risk_category:
+            query["risk_category"] = risk_category
+        if year:
+            query["year"] = year
+        if month:
+            query["month"] = month
+        
+        # Get total count
+        total = mongo_client.predictions.count_documents(query)
+        
+        # Get paginated results
+        skip = (page - 1) * page_size
+        cursor = mongo_client.predictions.find(query).sort("timestamp", -1).skip(skip).limit(page_size)
+        
+        predictions = []
+        for doc in cursor:
+            predictions.append(PredictionHistoryItem(
+                request_id=doc.get("request_id", ""),
+                carrier=doc.get("carrier", ""),
+                airport=doc.get("airport", ""),
+                year=doc.get("year", 0),
+                month=doc.get("month", 0),
+                prediction=doc.get("prediction", 0.0),
+                risk_category=doc.get("risk_category", ""),
+                model_version=doc.get("model_version", ""),
+                timestamp=doc.get("timestamp", "")
+            ))
+        
+        return PredictionHistoryResponse(
+            total=total,
+            page=page,
+            page_size=page_size,
+            predictions=predictions
+        )
+        
+    except Exception as e:
+        logger.error(f"History query error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {str(e)}")
+
+
+@app.get("/predictions/{request_id}")
+def get_prediction(request_id: str):
+    """
+    Get a single prediction by its request_id.
+    """
+    try:
+        mongo_client = get_mongo_client()
+        
+        doc = mongo_client.predictions.find_one({"request_id": request_id})
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Prediction {request_id} not found")
+        
+        # Remove MongoDB _id from response
+        doc.pop("_id", None)
+        return doc
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get prediction error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve prediction: {str(e)}")
+
+
+@app.delete("/predictions/{request_id}")
+def delete_prediction(request_id: str):
+    """
+    Delete a prediction by its request_id.
+    """
+    try:
+        mongo_client = get_mongo_client()
+        
+        result = mongo_client.predictions.delete_one({"request_id": request_id})
+        
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail=f"Prediction {request_id} not found")
+        
+        return {"message": f"Prediction {request_id} deleted", "deleted": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete prediction error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete prediction: {str(e)}")
 
 @app.get("/stats/summary")
 def summary_stats():

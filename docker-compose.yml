@@ -56,7 +56,7 @@ services:
       - airline-network
     mem_limit: 768m
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092" ]
       interval: 45s
       timeout: 15s
       retries: 3
@@ -94,7 +94,7 @@ services:
       - airline-network
     mem_limit: 1536m
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/nifi"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/nifi" ]
       interval: 45s
       timeout: 15s
       retries: 3
@@ -129,7 +129,7 @@ services:
         soft: 65536
         hard: 65536
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      test: [ "CMD", "clickhouse-client", "--query", "SELECT 1" ]
       interval: 45s
       timeout: 15s
       retries: 3
@@ -153,7 +153,7 @@ services:
     mem_limit: 1024m
     command: mongod --wiredTigerCacheSizeGB 0.5
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
       interval: 45s
       timeout: 15s
       retries: 3
@@ -172,6 +172,7 @@ services:
     container_name: ml-api
     depends_on:
       - clickhouse
+      - mongodb
     working_dir: /app
     volumes:
       - ./:/app
@@ -181,6 +182,8 @@ services:
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_HTTP_PORT: "8123"
       CLICKHOUSE_DATABASE: airline_data
+      MONGODB_URI: mongodb://mongodb:27017/
+      MONGODB_DATABASE: airline_ml
     command: >
       sh -c "pip install --no-cache-dir -r requirements-ml-api.txt && 
              uvicorn ml_api.app:app --host 0.0.0.0 --port 8001"
@@ -188,7 +191,7 @@ services:
       - airline-network
     mem_limit: 512m
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:8001/health || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -213,6 +216,29 @@ services:
       - ./:/app
     ports:
       - "3000:3000"
+    environment:
+      VITE_API_URL: http://localhost:8001
+    command: sh -c "npm install && npm run dev"
+    networks:
+      - airline-network
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Prediction UI - ML Predictions Interface (Port 3001)
+  prediction_ui:
+    image: node:20-alpine
+    container_name: prediction-ui
+    depends_on:
+      - ml_api
+    working_dir: /app/prediction_ui
+    volumes:
+      - ./:/app
+    ports:
+      - "3001:3001"
     environment:
       VITE_API_URL: http://localhost:8001
     command: sh -c "npm install && npm run dev"
@@ -264,21 +290,21 @@ volumes:
   # Kafka
   zookeeper-data:
   zookeeper-logs:
-  kafka-data:
-  # NiFi
+  kafka-data: # NiFi
+
   nifi-database:
   nifi-flowfile:
   nifi-content:
   nifi-state:
-  nifi-logs:
-  # Databases
+  nifi-logs: # Databases
+
   clickhouse-data:
   clickhouse-logs:
   mongodb-data:
 
-# =============================================================================
-# NETWORKS
-# =============================================================================
+    # =============================================================================
+    # NETWORKS
+    # =============================================================================
 
 networks:
   airline-network:
