@@ -976,10 +976,6 @@ def render_pipeline_status(status: PipelineStatus):
             <span class="status-dot {get_class(status.nifi)}"></span>
             <span class="status-name">NiFi: {get_label(status.nifi)}</span>
         </div>
-        <div class="status-row">
-            <span class="status-dot {get_class(status.ml)}"></span>
-            <span class="status-name">ML Model: {get_label(status.ml)}</span>
-        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1032,11 +1028,10 @@ def main():
     pipeline_status = check_pipeline_status()
     
     # Header
-    st.markdown(f"""
+    st.markdown("""
     <div class="main-header">
         <h1 class="main-title">Airline Data Pipeline</h1>
         <p class="main-subtitle">Dashboard Analytics Temps Reel - NiFi / Kafka / ClickHouse</p>
-        <span class="version-badge">v{APP_VERSION} - Real-time Streaming</span>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1055,27 +1050,8 @@ def main():
         st.metric("Aeroports", f"{metrics.airports}")
     
     # Sidebar
+    selected_year = None  # Pas de filtre annee
     with st.sidebar:
-        st.markdown("## Configuration")
-        st.markdown("---")
-        
-        years = load_years()
-        selected_year = st.selectbox(
-            "Annee",
-            options=[None] + years,
-            format_func=lambda x: "Toutes les annees" if x is None else str(x),
-            index=0
-        )
-        
-        st.markdown("---")
-        st.markdown("## Auto-Refresh")
-        auto_refresh = st.toggle("Activer", value=False)
-        refresh_seconds = st.slider("Intervalle (sec)", 5, 60, 15)
-        
-        if auto_refresh and AUTOREFRESH_AVAILABLE:
-            st_autorefresh(interval=refresh_seconds * 1000, key="auto_refresh")
-        
-        st.markdown("---")
         st.markdown("## Statut Pipeline")
         render_pipeline_status(pipeline_status)
         
@@ -1086,41 +1062,18 @@ def main():
         st.text(f"Group: {KAFKA_GROUP_ID}")
         
         st.markdown("---")
-        st.markdown(f"<div style='text-align:center;color:#64748b;font-size:0.8rem;'>v{APP_VERSION}</div>", unsafe_allow_html=True)
+        st.markdown("## Auto-Refresh")
+        auto_refresh = st.toggle("Activer", value=True)
+        refresh_seconds = st.slider("Intervalle (sec)", 5, 60, 5, disabled=not auto_refresh)
+        
+        if auto_refresh and AUTOREFRESH_AVAILABLE:
+            st_autorefresh(interval=refresh_seconds * 1000, key="auto_refresh")
     
     # Onglets
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Vue d'ensemble", "Temps Reel", "Analyses", "Comparaisons", "Donnees"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Temps Reel", "Analyses", "Comparaisons", "Donnees"])
     
-    # TAB 1: Vue d'ensemble
+    # TAB 1: Temps Reel - SECTION PRINCIPALE
     with tab1:
-        st.markdown('<p class="section-title">Tendances Mensuelles</p>', unsafe_allow_html=True)
-        monthly_data = load_monthly_data(selected_year)
-        st.plotly_chart(create_monthly_chart(monthly_data), use_container_width=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown('<p class="section-title">Causes des Retards</p>', unsafe_allow_html=True)
-            causes = load_delay_causes(selected_year)
-            st.plotly_chart(create_delay_causes_chart(causes), use_container_width=True)
-        
-        with col2:
-            st.markdown('<p class="section-title">Statut du Pipeline</p>', unsafe_allow_html=True)
-            render_pipeline_status(pipeline_status)
-            
-            if not monthly_data.empty:
-                total_flights = monthly_data['flights'].sum()
-                total_delayed = monthly_data['delayed'].sum()
-                avg_rate = total_delayed / total_flights if total_flights > 0 else 0
-                
-                st.info(f"""
-                **Resume {"de l'annee " + str(selected_year) if selected_year else "global"}:**
-                - Total des vols: {total_flights:,}
-                - Vols retardes: {total_delayed:,}
-                - Taux moyen: {avg_rate*100:.1f}%
-                """)
-    
-    # TAB 2: Temps Reel - SECTION PRINCIPALE
-    with tab2:
         st.markdown("""
         <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
             <p class="section-title" style="margin: 0; border: none; padding: 0;">Streaming Temps Reel - NiFi/Kafka/ClickHouse</p>
@@ -1236,18 +1189,6 @@ def main():
         
         st.markdown("---")
         
-        # Bouton refresh manuel
-        col1, col2, col3 = st.columns([1, 1, 3])
-        with col1:
-            if st.button("Rafraichir", key="refresh_rt", type="primary"):
-                st.rerun()
-        with col2:
-            if st.button("Vider Buffer", key="clear_buffer"):
-                buf.clear()
-                st.rerun()
-        
-        st.markdown("---")
-        
         # Derniers messages Kafka
         st.markdown("### Derniers Messages Kafka (50 derniers)")
         
@@ -1262,24 +1203,11 @@ def main():
         if buffer_len > 0:
             latest = buffer_snapshot[-50:][::-1]  # Derniers 50, plus recent en premier
             
-            # Afficher en cards
-            st.markdown('<div class="scroll-container">', unsafe_allow_html=True)
-            for event in latest[:20]:  # Afficher 20 cards max
+            # Afficher en cards dans un container scrollable de hauteur fixe (5 messages visibles)
+            st.markdown('<div style="max-height: 280px; overflow-y: auto; padding-right: 0.5rem;">', unsafe_allow_html=True)
+            for event in latest:
                 render_kafka_message(event)
             st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Tableau complet
-            st.markdown("### Tableau des Messages")
-            df_latest = pd.DataFrame([e.record for e in latest])
-            
-            if not df_latest.empty:
-                # Colonnes importantes
-                cols_order = ['carrier', 'carrier_name', 'airport', 'airport_name', 'year', 'month', 'arr_flights', 'arr_del15', 'arr_delay']
-                cols_present = [c for c in cols_order if c in df_latest.columns]
-                other_cols = [c for c in df_latest.columns if c not in cols_present]
-                df_display = df_latest[cols_present + other_cols]
-                
-                st.dataframe(df_display, use_container_width=True, height=400)
             
         else:
             st.warning("Aucun message Kafka dans le buffer.")
@@ -1334,8 +1262,8 @@ def main():
             with col3:
                 st.metric("Taux Retard Global", f"{metrics.delay_rate*100:.1f}%")
     
-    # TAB 3: Analyses
-    with tab3:
+    # TAB 2: Analyses
+    with tab2:
         col1, col2 = st.columns(2)
         
         with col1:
@@ -1356,8 +1284,8 @@ def main():
                 worst = airport_data.nlargest(3, 'delay_rate')
                 st.error(f"Plus de retards: {', '.join(worst['airport'].tolist())}")
     
-    # TAB 4: Comparaisons
-    with tab4:
+    # TAB 3: Comparaisons
+    with tab3:
         st.markdown('<p class="section-title">Comparaison des Performances</p>', unsafe_allow_html=True)
         
         carrier_data = load_carrier_data(selected_year)
@@ -1387,8 +1315,8 @@ def main():
                               plot_bgcolor='rgba(0,0,0,0)', height=400)
             st.plotly_chart(fig, use_container_width=True)
     
-    # TAB 5: Donnees
-    with tab5:
+    # TAB 4: Donnees
+    with tab4:
         st.markdown('<p class="section-title">Donnees Detaillees</p>', unsafe_allow_html=True)
         
         detailed_data = load_detailed_data(selected_year)

@@ -202,3 +202,77 @@ def monthly_stats():
     """
     df = query_df(sql)
     return df.to_dict(orient="records")
+
+
+@app.get("/stats/classification")
+def classification_stats():
+    """
+    Statistiques du modèle de classification.
+    Expose les métriques ROC-AUC, cutoff, et distribution des risques.
+    """
+    # Distribution par catégorie de risque
+    risk_sql = """
+    SELECT 
+        risk_category,
+        count() as count,
+        avg(predicted_delay_rate) as avg_probability,
+        avg(risk_score) as avg_risk_score
+    FROM ml_predictions
+    WHERE year = 2026
+    GROUP BY risk_category
+    ORDER BY 
+        CASE risk_category
+            WHEN 'critical' THEN 1
+            WHEN 'high' THEN 2
+            WHEN 'medium' THEN 3
+            WHEN 'low' THEN 4
+        END
+    """
+    risk_df = query_df(risk_sql)
+    
+    # Statistiques globales
+    stats_sql = """
+    SELECT
+        count() as total_predictions,
+        countIf(predicted_delay_rate >= 0.47) as above_cutoff,
+        avg(predicted_delay_rate) as avg_probability,
+        min(predicted_delay_rate) as min_probability,
+        max(predicted_delay_rate) as max_probability,
+        countDistinct(carrier) as unique_carriers,
+        countDistinct(origin_airport) as unique_airports
+    FROM ml_predictions
+    WHERE year = 2026
+    """
+    stats_df = query_df(stats_sql)
+    
+    # Métriques du modèle production (mis à jour)
+    model_metrics = {
+        "model_type": "XGBoost Classifier",
+        "accuracy": 0.790,
+        "roc_auc_test": 0.810,
+        "precision": 0.718,
+        "recall": 0.421,
+        "f1_score": 0.530,
+        "cutoff": 0.47,
+        "target_threshold": 0.20,  # delay_rate > 20% = risque
+        "n_features": 20,
+        "train_samples": 216019,
+    }
+    
+    stats = stats_df.iloc[0].to_dict() if not stats_df.empty else {}
+    total = float(stats.get("total_predictions", 0))
+    above = float(stats.get("above_cutoff", 0))
+    
+    return {
+        "model": model_metrics,
+        "predictions": {
+            "total": int(total),
+            "above_cutoff": int(above),
+            "above_cutoff_pct": round(above / total * 100, 2) if total > 0 else 0,
+            "avg_probability": round(float(stats.get("avg_probability", 0)), 4),
+            "unique_carriers": int(stats.get("unique_carriers", 0)),
+            "unique_airports": int(stats.get("unique_airports", 0)),
+        },
+        "risk_distribution": risk_df.to_dict(orient="records"),
+    }
+

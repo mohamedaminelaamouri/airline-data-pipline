@@ -1,0 +1,8 @@
+# Optional dependencies for integrations
+# Install with: pip install -r requirements-optional.txt
+
+# MongoDB source (later)
+pymongo==4.10.1
+
+# Notifications (webhook)
+requests==2.31.0
