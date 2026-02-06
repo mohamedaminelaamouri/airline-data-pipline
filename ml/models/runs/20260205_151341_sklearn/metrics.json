@@ -1,0 +1,58 @@
+{
+  "run_id": "20260205_151341_sklearn",
+  "backend": "sklearn",
+  "data": "data/Airline_Delay_Cause_Cpt.csv",
+  "train_config": {
+    "target_threshold": 0.2,
+    "sample_weight": "sqrt_flights",
+    "n_estimators": 600,
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "subsample": 0.9,
+    "colsample_bytree": 0.9,
+    "reg_lambda": 1.0,
+    "random_state": 42,
+    "min_recall": 0.9
+  },
+  "splits": {
+    "train": 216019,
+    "val": 64552,
+    "test": 37446
+  },
+  "metrics": {
+    "val": {
+      "roc_auc": 0.8324547064150202,
+      "pr_auc": 0.7431023135222627,
+      "positive_rate": 0.34922233238319494
+    },
+    "test": {
+      "roc_auc": 0.8628349667206019,
+      "pr_auc": 0.7487829453066888,
+      "positive_rate": 0.2903914970891417
+    },
+    "train_seconds": 15.031795501708984
+  },
+  "cutoff": {
+    "policy": "min_missed_with_recall_constraint",
+    "min_recall": 0.9,
+    "thr": 0.17,
+    "alert_rate": 0.6318626843475028,
+    "prec1": 0.5012748847700303,
+    "rec1": 0.906977775806237,
+    "f1_1": 0.6456869463611817,
+    "bal_acc": 0.7113741029760791,
+    "test_at_cutoff": {
+      "thr": 0.17,
+      "alert_rate": 0.47150563478075097,
+      "prec1": 0.5222587222473947,
+      "rec1": 0.8479860217031451,
+      "f1_1": 0.6464072905713284,
+      "bal_acc": 0.7652733058989909
+    }
+  },
+  "artifacts": {
+    "model": "ml\\models\\runs\\20260205_151341_sklearn\\model.pkl",
+    "le_carrier": "ml\\models\\runs\\20260205_151341_sklearn\\label_encoder_carrier.pkl",
+    "le_airport": "ml\\models\\runs\\20260205_151341_sklearn\\label_encoder_airport.pkl"
+  }
+}
