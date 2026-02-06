@@ -41,3 +41,7 @@ export async function getMonthlyStats() {
   const res = await fetch(`${API_URL}/stats/monthly`)
   return res.json()
 }
+export async function getCostStats() {
+  const res = await fetch(`${API_URL}/stats/cost`)
+  return res.json()
+}

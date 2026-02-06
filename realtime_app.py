@@ -1059,6 +1059,104 @@ def load_detailed_data(year: Optional[int] = None) -> pd.DataFrame:
         logger.error(f"Error loading detailed data: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=60)
+def load_delay_cost_metrics(year: Optional[int] = None) -> Dict[str, Any]:
+    """Calcule les métriques de coût de retard selon les formules DAX Power BI."""
+    client = get_clickhouse_client()
+    if not client:
+        return {
+            'total_delay_cost': 0.0,
+            'avg_minutes_per_delayed_flight': 0.0,
+            'top_airlines_by_cost': pd.DataFrame(),
+            'top_airports_by_cost': pd.DataFrame()
+        }
+    
+    COST_PER_MINUTE = 100.76  # Coût en dollars par minute de retard
+    
+    try:
+        where = f"WHERE year = {year}" if year else ""
+        
+        # Coût total des retards et moyenne minutes par vol retardé
+        result_global = client.query(f"""
+            SELECT 
+                SUM(arr_delay) * {COST_PER_MINUTE} as total_delay_cost,
+                SUM(arr_delay) / NULLIF(SUM(arr_del15), 0) as avg_minutes_per_delayed_flight
+            FROM flights
+            {where}
+        """)
+        
+        total_delay_cost = 0.0
+        avg_minutes_per_delayed_flight = 0.0
+        
+        if result_global.result_rows:
+            row = result_global.result_rows[0]
+            total_delay_cost = float(row[0] or 0.0)
+            avg_minutes_per_delayed_flight = float(row[1] or 0.0)
+        
+        # Top 10 compagnies par coût de retard
+        result_airlines = client.query(f"""
+            SELECT 
+                carrier_name,
+                carrier,
+                SUM(arr_delay) * {COST_PER_MINUTE} as delay_cost,
+                SUM(arr_delay) as total_delay_minutes,
+                SUM(arr_del15) as delayed_flights,
+                SUM(arr_flights) as total_flights
+            FROM flights
+            {where}
+            GROUP BY carrier, carrier_name
+            HAVING delay_cost > 0
+            ORDER BY delay_cost DESC
+            LIMIT 10
+        """)
+        
+        top_airlines = pd.DataFrame()
+        if result_airlines.result_rows:
+            top_airlines = pd.DataFrame(
+                result_airlines.result_rows,
+                columns=['carrier_name', 'carrier', 'delay_cost', 'total_delay_minutes', 'delayed_flights', 'total_flights']
+            )
+        
+        # Top 10 aéroports par coût de retard
+        result_airports = client.query(f"""
+            SELECT 
+                airport_name,
+                airport,
+                SUM(arr_delay) * {COST_PER_MINUTE} as delay_cost,
+                SUM(arr_delay) as total_delay_minutes,
+                SUM(arr_del15) as delayed_flights,
+                SUM(arr_flights) as total_flights
+            FROM flights
+            {where}
+            GROUP BY airport, airport_name
+            HAVING delay_cost > 0
+            ORDER BY delay_cost DESC
+            LIMIT 10
+        """)
+        
+        top_airports = pd.DataFrame()
+        if result_airports.result_rows:
+            top_airports = pd.DataFrame(
+                result_airports.result_rows,
+                columns=['airport_name', 'airport', 'delay_cost', 'total_delay_minutes', 'delayed_flights', 'total_flights']
+            )
+        
+        return {
+            'total_delay_cost': total_delay_cost,
+            'avg_minutes_per_delayed_flight': avg_minutes_per_delayed_flight,
+            'top_airlines_by_cost': top_airlines,
+            'top_airports_by_cost': top_airports
+        }
+        
+    except Exception as e:
+        logger.error(f"Error loading delay cost metrics: {e}")
+        return {
+            'total_delay_cost': 0.0,
+            'avg_minutes_per_delayed_flight': 0.0,
+            'top_airlines_by_cost': pd.DataFrame(),
+            'top_airports_by_cost': pd.DataFrame()
+        }
+
 def load_realtime_stats() -> pd.DataFrame:
     """Stats temps reel depuis ClickHouse."""
     client = get_clickhouse_client()
@@ -1380,6 +1478,36 @@ def main():
     with col5:
         st.metric("Aeroports", f"{metrics.airports}")
     
+    # === NOUVELLES METRIQUES DE COUT ===
+    st.markdown("---")
+    st.markdown("### 💰 Métriques de Coût des Retards")
+    
+    cost_metrics = load_delay_cost_metrics()
+    
+    col_c1, col_c2, col_c3 = st.columns(3)
+    
+    with col_c1:
+        total_cost = cost_metrics['total_delay_cost']
+        if total_cost >= 1_000_000_000:
+            cost_display = f"${total_cost/1_000_000_000:.2f}B"
+        elif total_cost >= 1_000_000:
+            cost_display = f"${total_cost/1_000_000:.2f}M"
+        else:
+            cost_display = f"${total_cost:,.0f}"
+        st.metric("Coût Total des Retards", cost_display, help="Coût total = Σ(arr_delay) × $100.76/min")
+    
+    with col_c2:
+        avg_min = cost_metrics['avg_minutes_per_delayed_flight']
+        st.metric("Avg Minutes/Vol Retardé", f"{avg_min:.1f} min", help="Minutes moyennes = Σ(arr_delay) ÷ Σ(arr_del15)")
+    
+    with col_c3:
+        # Calculer le coût moyen par vol retardé
+        if metrics.delayed > 0:
+            avg_cost_per_delayed = total_cost / metrics.delayed
+            st.metric("Coût Moyen/Vol Retardé", f"${avg_cost_per_delayed:,.0f}", help="Coût total ÷ nombre vols retardés")
+        else:
+            st.metric("Coût Moyen/Vol Retardé", "$0")
+    
     # Sidebar
     selected_year = None  # Pas de filtre annee
     with st.sidebar:
@@ -1690,6 +1818,112 @@ def main():
             if not airport_data.empty:
                 worst = airport_data.nlargest(3, 'delay_rate')
                 st.error(f"Plus de retards: {', '.join(worst['airport'].tolist())}")
+        
+        # === NOUVELLE SECTION: Analyse des Coûts de Retard ===
+        st.markdown("---")
+        st.markdown('<p class="section-title">💰 Analyse des Coûts de Retard</p>', unsafe_allow_html=True)
+        
+        cost_metrics = load_delay_cost_metrics(selected_year)
+        
+        col_cost1, col_cost2 = st.columns(2)
+        
+        with col_cost1:
+            st.markdown("#### Top 10 Compagnies par Coût de Retard")
+            df_airlines = cost_metrics['top_airlines_by_cost']
+            
+            if not df_airlines.empty:
+                # Créer un graphique en barres
+                fig_airlines = go.Figure()
+                
+                fig_airlines.add_trace(go.Bar(
+                    x=df_airlines['delay_cost'],
+                    y=df_airlines['carrier_name'],
+                    orientation='h',
+                    marker=dict(
+                        color=df_airlines['delay_cost'],
+                        colorscale='Reds',
+                        showscale=False
+                    ),
+                    text=[f"${v/1_000_000:.1f}M" if v >= 1_000_000 else f"${v/1_000:.0f}K" 
+                          for v in df_airlines['delay_cost']],
+                    textposition='outside',
+                    hovertemplate='<b>%{y}</b><br>' +
+                                  'Coût: $%{x:,.0f}<br>' +
+                                  '<extra></extra>'
+                ))
+                
+                fig_airlines.update_layout(
+                    template="plotly_white",
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    height=400,
+                    showlegend=False,
+                    xaxis_title="Coût des Retards ($)",
+                    yaxis=dict(autorange="reversed"),
+                    margin=dict(l=10, r=10, t=10, b=10)
+                )
+                
+                st.plotly_chart(fig_airlines, use_container_width=True, key="cost_airlines_chart")
+                
+                # Afficher le tableau avec détails
+                df_display = df_airlines.copy()
+                df_display['delay_cost'] = df_display['delay_cost'].apply(lambda x: f"${x:,.0f}")
+                df_display['total_delay_minutes'] = df_display['total_delay_minutes'].apply(lambda x: f"{x:,.0f}")
+                df_display = df_display[['carrier_name', 'carrier', 'delay_cost', 'total_delay_minutes', 'delayed_flights']]
+                df_display.columns = ['Compagnie', 'Code', 'Coût Total', 'Minutes Retard', 'Vols Retardés']
+                
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            else:
+                st.info("Aucune donnée de coût disponible pour les compagnies")
+        
+        with col_cost2:
+            st.markdown("#### Top 10 Aéroports par Coût de Retard")
+            df_airports = cost_metrics['top_airports_by_cost']
+            
+            if not df_airports.empty:
+                # Créer un graphique en barres
+                fig_airports = go.Figure()
+                
+                fig_airports.add_trace(go.Bar(
+                    x=df_airports['delay_cost'],
+                    y=df_airports['airport_name'],
+                    orientation='h',
+                    marker=dict(
+                        color=df_airports['delay_cost'],
+                        colorscale='Oranges',
+                        showscale=False
+                    ),
+                    text=[f"${v/1_000_000:.1f}M" if v >= 1_000_000 else f"${v/1_000:.0f}K" 
+                          for v in df_airports['delay_cost']],
+                    textposition='outside',
+                    hovertemplate='<b>%{y}</b><br>' +
+                                  'Coût: $%{x:,.0f}<br>' +
+                                  '<extra></extra>'
+                ))
+                
+                fig_airports.update_layout(
+                    template="plotly_white",
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    height=400,
+                    showlegend=False,
+                    xaxis_title="Coût des Retards ($)",
+                    yaxis=dict(autorange="reversed"),
+                    margin=dict(l=10, r=10, t=10, b=10)
+                )
+                
+                st.plotly_chart(fig_airports, use_container_width=True, key="cost_airports_chart")
+                
+                # Afficher le tableau avec détails
+                df_display = df_airports.copy()
+                df_display['delay_cost'] = df_display['delay_cost'].apply(lambda x: f"${x:,.0f}")
+                df_display['total_delay_minutes'] = df_display['total_delay_minutes'].apply(lambda x: f"{x:,.0f}")
+                df_display = df_display[['airport_name', 'airport', 'delay_cost', 'total_delay_minutes', 'delayed_flights']]
+                df_display.columns = ['Aéroport', 'Code', 'Coût Total', 'Minutes Retard', 'Vols Retardés']
+                
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            else:
+                st.info("Aucune donnée de coût disponible pour les aéroports")
     
     # TAB 3: Comparaisons
     with tab3:

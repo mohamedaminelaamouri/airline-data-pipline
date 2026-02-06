@@ -6,7 +6,8 @@ import {
   getRouteExplainability,
   getMonitoring,
   getMetadata,
-  getMonthlyStats
+  getMonthlyStats,
+  getCostStats
 } from './api'
 
 // Icons as SVG components
@@ -77,6 +78,11 @@ const Icons = {
       <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
     </svg>
   ),
+  DollarSign: () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>
+    </svg>
+  ),
   Download: () => (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/>
@@ -117,6 +123,7 @@ function App() {
   const [routeExplain, setRouteExplain] = useState([])
   const [route, setRoute] = useState({ carrier: '', airport: '' })
   const [monitoring, setMonitoring] = useState(null)
+  const [costStats, setCostStats] = useState(null)
   const [loading, setLoading] = useState({})
   const [lastUpdate, setLastUpdate] = useState(new Date())
   
@@ -131,13 +138,14 @@ function App() {
     const loadInitialData = async () => {
       setLoading(l => ({ ...l, initial: true }))
       try {
-        const [summaryData, metadataData, monthlyData, predictionsData, globalData, monitoringData] = await Promise.all([
+        const [summaryData, metadataData, monthlyData, predictionsData, globalData, monitoringData, costData] = await Promise.all([
           getSummary(),
           getMetadata(),
           getMonthlyStats(),
           getPredictions({}), // Précharger TOUTES les prédictions
           getGlobalExplainability(),
-          getMonitoring()
+          getMonitoring(),
+          getCostStats()
         ])
         setSummary(summaryData)
         setMetadata(metadataData)
@@ -146,6 +154,7 @@ function App() {
         setPredictions(predictionsData) // Afficher toutes par défaut
         setGlobalExplain(globalData)
         setMonitoring(monitoringData)
+        setCostStats(costData)
         setLastUpdate(new Date())
       } catch (e) {
         console.error('Error loading initial data:', e)
@@ -571,6 +580,7 @@ function App() {
     { id: 'home', label: 'Vue d\'ensemble', icon: Icons.Home },
     { id: 'pred', label: 'Prédictions', icon: Icons.Chart },
     { id: 'explain', label: 'Explicabilité', icon: Icons.Brain },
+    { id: 'cost', label: 'Analyse Coûts', icon: Icons.DollarSign },
     { id: 'monitor', label: 'Monitoring', icon: Icons.Activity },
   ]
 
@@ -1097,6 +1107,156 @@ function App() {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'cost' && costStats && (
+            <div className="cost-page">
+              {/* Métriques Globales */}
+              <div className="metrics-grid">
+                <div className="metric-card primary">
+                  <div className="metric-icon"><Icons.DollarSign /></div>
+                  <div className="metric-content">
+                    <h4>Coût Total des Retards</h4>
+                    <span className="metric-value">
+                      ${costStats.total_delay_cost >= 1_000_000_000 
+                        ? `${(costStats.total_delay_cost / 1_000_000_000).toFixed(2)}B` 
+                        : costStats.total_delay_cost >= 1_000_000
+                        ? `${(costStats.total_delay_cost / 1_000_000).toFixed(1)}M`
+                        : formatNumber(costStats.total_delay_cost)}
+                    </span>
+                    <p className="metric-desc">Σ(arr_delay) × $100.76/min</p>
+                  </div>
+                </div>
+                <div className="metric-card success">
+                  <div className="metric-icon"><Icons.Calendar /></div>
+                  <div className="metric-content">
+                    <h4>Minutes Retard Totales</h4>
+                    <span className="metric-value">{formatCompact(costStats.total_delay_minutes)}</span>
+                    <p className="metric-desc">Total minutes de retard cumulées</p>
+                  </div>
+                </div>
+                <div className="metric-card info">
+                  <div className="metric-icon"><Icons.Activity /></div>
+                  <div className="metric-content">
+                    <h4>Moyenne/Vol Retardé</h4>
+                    <span className="metric-value">{costStats.avg_minutes_per_delayed_flight.toFixed(1)} min</span>
+                    <p className="metric-desc">Σ(arr_delay) ÷ Σ(arr_del15)</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Top Compagnies par Coût */}
+              <div className="cost-analysis-grid">
+                <div className="card">
+                  <div className="card-header">
+                    <h3>Top 5 Compagnies - Coût des Retards</h3>
+                    <span className="badge badge-danger">Impact Financier</span>
+                  </div>
+                  <div className="cost-chart">
+                    {costStats.top_carriers_by_cost && costStats.top_carriers_by_cost.slice(0, 5).map((carrier, idx) => (
+                      <div key={idx} className="cost-bar-container">
+                        <div className="cost-bar-header">
+                          <span className="cost-bar-rank">#{idx + 1}</span>
+                          <span className="cost-bar-label">{carrier.carrier_name || carrier.carrier}</span>
+                          <span className="cost-bar-value">
+                            ${carrier.delay_cost >= 1_000_000 
+                              ? `${(carrier.delay_cost / 1_000_000).toFixed(1)}M` 
+                              : carrier.delay_cost >= 1_000
+                              ? `${(carrier.delay_cost / 1_000).toFixed(0)}K`
+                              : carrier.delay_cost.toFixed(0)}
+                          </span>
+                        </div>
+                        <div className="cost-bar-wrapper">
+                          <div 
+                            className="cost-bar" 
+                            style={{
+                              width: `${(carrier.delay_cost / costStats.top_carriers_by_cost[0].delay_cost) * 100}%`,
+                              background: idx === 0 ? '#ef4444' : idx === 1 ? '#f97316' : idx === 2 ? '#f59e0b' : '#fbbf24'
+                            }}
+                          />
+                        </div>
+                        <div className="cost-bar-stats">
+                          <span>{formatCompact(carrier.delay_minutes)} min retard</span>
+                          <span>•</span>
+                          <span>{formatCompact(carrier.delayed_flights)} vols retardés</span>
+                          <span>•</span>
+                          <span>{carrier.avg_delay_per_flight?.toFixed(1)} min/vol</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Top Aéroports par Coût */}
+                <div className="card">
+                  <div className="card-header">
+                    <h3>Top 5 Aéroports - Coût des Retards</h3>
+                    <span className="badge badge-warning">Impact Géographique</span>
+                  </div>
+                  <div className="cost-chart">
+                    {costStats.top_airports_by_cost && costStats.top_airports_by_cost.slice(0, 5).map((airport, idx) => (
+                      <div key={idx} className="cost-bar-container">
+                        <div className="cost-bar-header">
+                          <span className="cost-bar-rank">#{idx + 1}</span>
+                          <span className="cost-bar-label">{airport.airport_name || airport.airport}</span>
+                          <span className="cost-bar-value">
+                            ${airport.delay_cost >= 1_000_000 
+                              ? `${(airport.delay_cost / 1_000_000).toFixed(1)}M` 
+                              : airport.delay_cost >= 1_000
+                              ? `${(airport.delay_cost / 1_000).toFixed(0)}K`
+                              : airport.delay_cost.toFixed(0)}
+                          </span>
+                        </div>
+                        <div className="cost-bar-wrapper">
+                          <div 
+                            className="cost-bar" 
+                            style={{
+                              width: `${(airport.delay_cost / costStats.top_airports_by_cost[0].delay_cost) * 100}%`,
+                              background: idx === 0 ? '#9b5de5' : idx === 1 ? '#a67bed' : idx === 2 ? '#b899f5' : '#cab7fd'
+                            }}
+                          />
+                        </div>
+                        <div className="cost-bar-stats">
+                          <span>{formatCompact(airport.delay_minutes)} min retard</span>
+                          <span>•</span>
+                          <span>{formatCompact(airport.delayed_flights)} vols retardés</span>
+                          <span>•</span>
+                          <span>{airport.avg_delay_per_flight?.toFixed(1)} min/vol</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Explication de la Formule */}
+              <div className="card">
+                <div className="card-header">
+                  <h3>📊 Méthodologie de Calcul</h3>
+                </div>
+                <div style={{padding: '1.5rem'}}>
+                  <div className="formula-section">
+                    <h4>Formules DAX Power BI</h4>
+                    <div className="formula-box">
+                      <strong>Airline Delay Cost</strong> = SUM(FlightData[arr_delay]) × 100.76
+                      <p>Calcule le coût des retards par compagnie aérienne</p>
+                    </div>
+                    <div className="formula-box">
+                      <strong>Airport Delay Cost</strong> = SUM(FlightData[arr_delay]) × 100.76  
+                      <p>Calcule le coût des retards par aéroport</p>
+                    </div>
+                    <div className="formula-box">
+                      <strong>Avg Minutes Per Delayed Flight</strong> = SUM(arr_delay) ÷ SUM(arr_del15)
+                      <p>Minutes moyennes de retard par vol retardé</p>
+                    </div>
+                    <p style={{marginTop: '1rem', color: 'var(--text-secondary)', fontSize: '0.875rem'}}>
+                      <strong>Note:</strong> Le coût par minute ($100.76) est basé sur des estimations industrielles 
+                      incluant le coût de carburant, personnel, maintenance, et perte de revenus.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           )}
