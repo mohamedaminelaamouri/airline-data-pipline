@@ -1,0 +1,73 @@
+{
+  "run_id": "20260205_232640",
+  "model_type": "XGBClassifier",
+  "target_threshold": 0.2,
+  "cutoff": 0.46999999999999986,
+  "feature_columns": [
+    "year",
+    "month",
+    "month_sin",
+    "month_cos",
+    "is_summer",
+    "is_winter",
+    "is_holiday_season",
+    "carrier_encoded",
+    "airport_encoded",
+    "arr_flights",
+    "log_arr_flights",
+    "pair_lag1",
+    "pair_lag3_mean",
+    "pair_expanding_mean",
+    "airport_lag1",
+    "airport_lag3_mean",
+    "airport_expanding_mean",
+    "carrier_lag1",
+    "carrier_lag3_mean",
+    "carrier_expanding_mean"
+  ],
+  "n_features": 20,
+  "train_samples": 216019,
+  "val_samples": 63225,
+  "test_samples": 38773,
+  "train_time_seconds": 7.973504543304443,
+  "metrics": {
+    "test": {
+      "accuracy": 0.7902148402238671,
+      "roc_auc": 0.8105238697090874,
+      "precision": 0.7180368865270397,
+      "recall": 0.42054192603441964,
+      "f1_score": 0.5304237385983143
+    },
+    "val": {
+      "accuracy": 0.74212732305259
+    }
+  },
+  "confusion_matrix": {
+    "tn": 26045,
+    "fp": 1804,
+    "fn": 6330,
+    "tp": 4594
+  },
+  "feature_importance": {
+    "year": 0.03248608112335205,
+    "month": 0.06110236421227455,
+    "month_sin": 0.06307955086231232,
+    "month_cos": 0.06829235702753067,
+    "is_summer": 0.04824652522802353,
+    "is_winter": 0.045160770416259766,
+    "is_holiday_season": 0.036615047603845596,
+    "carrier_encoded": 0.017634356394410133,
+    "airport_encoded": 0.008747907355427742,
+    "arr_flights": 0.014269952662289143,
+    "log_arr_flights": 0.015039906837046146,
+    "pair_lag1": 0.19797703623771667,
+    "pair_lag3_mean": 0.0529596209526062,
+    "pair_expanding_mean": 0.03057326190173626,
+    "airport_lag1": 0.07441547513008118,
+    "airport_lag3_mean": 0.04491613805294037,
+    "airport_expanding_mean": 0.011573313735425472,
+    "carrier_lag1": 0.13538017868995667,
+    "carrier_lag3_mean": 0.02368282340466976,
+    "carrier_expanding_mean": 0.017847437411546707
+  }
+}
