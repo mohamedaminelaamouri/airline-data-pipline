@@ -299,21 +299,21 @@ def kafka_messages_per_minute(buffer: Deque[KafkaEvent], window_minutes: int = 1
 st.markdown("""
 <style>
     :root {
-        --primary: #7c3aed;
-        --primary-light: #a78bfa;
-        --primary-dark: #5b21b6;
+        --primary: #9b5de5;
+        --primary-light: #c084fc;
+        --primary-dark: #6a0dad;
         --success: #10b981;
         --warning: #f59e0b;
         --danger: #ef4444;
         --info: #3b82f6;
-        --bg-main: #f5f7fa;
+        --bg-main: #f9f9fb;
         --bg-card: #ffffff;
-        --bg-sidebar: #fafbfc;
+        --bg-sidebar: #f3f4f6;
         --text-dark: #1f2937;
         --text-gray: #6b7280;
         --text-light: #9ca3af;
         --border: #e5e7eb;
-        --shadow: rgba(0, 0, 0, 0.08);
+        --shadow: rgba(0, 0, 0, 0.1);
     }
     
     .stApp {
@@ -331,11 +331,11 @@ st.markdown("""
     }
     
     .main-header {
-        background: linear-gradient(135deg, var(--primary) 0%, #9333ea 100%);
+        background: linear-gradient(135deg, var(--primary) 0%, #c084fc 100%);
         padding: 1.5rem 2rem;
         border-radius: 12px;
         margin-bottom: 1.5rem;
-        box-shadow: 0 4px 20px rgba(124, 58, 237, 0.25);
+        box-shadow: 0 4px 20px rgba(155, 93, 229, 0.25);
     }
     
     .main-title {
@@ -526,17 +526,17 @@ st.markdown("""
         display: inline-flex;
         align-items: center;
         gap: 0.5rem;
-        background: rgba(239, 68, 68, 0.1);
+        background: rgba(155, 93, 229, 0.1);
         padding: 0.25rem 0.75rem;
         border-radius: 20px;
         font-size: 0.8rem;
-        color: var(--danger);
+        color: var(--primary);
     }
     
     .live-dot {
         width: 8px;
         height: 8px;
-        background: var(--danger);
+        background: var(--primary);
         border-radius: 50%;
         animation: pulse 1.5s infinite;
     }
@@ -550,57 +550,111 @@ st.markdown("""
     /* Tabs styling */
     .stTabs [data-baseweb="tab-list"] {
         background: var(--bg-card);
-        border-radius: 10px;
-        padding: 4px;
-        gap: 4px;
+        border-radius: 12px;
+        padding: 6px;
+        gap: 6px;
         border: 1px solid var(--border);
+        box-shadow: 0 2px 8px var(--shadow);
     }
     
     .stTabs [data-baseweb="tab"] {
         color: var(--text-dark) !important;
-        border-radius: 8px;
+        border-radius: 10px;
         background: transparent !important;
+        padding: 10px 20px;
+        font-weight: 500;
+        transition: all 0.3s ease;
     }
     
     .stTabs [aria-selected="true"] {
         background: var(--primary) !important;
         color: white !important;
+        box-shadow: 0 4px 12px rgba(155, 93, 229, 0.3);
     }
     
-    /* DataFrames - Force light theme */
+    /* DataFrames - Force light theme with proper visibility */
     .stDataFrame, [data-testid="stDataFrame"] {
-        background: var(--bg-card) !important;
-        border: 1px solid var(--border) !important;
+        background: #ffffff !important;
+        border: 1px solid #e5e7eb !important;
         border-radius: 10px !important;
+        overflow: visible !important;
+        display: block !important;
     }
     
     .stDataFrame table, [data-testid="stDataFrame"] table {
-        background: var(--bg-card) !important;
+        background: #ffffff !important;
+        width: 100% !important;
+        display: table !important;
     }
     
     .stDataFrame th, [data-testid="stDataFrame"] th {
-        background: var(--bg-main) !important;
-        color: var(--text-dark) !important;
-        border-bottom: 2px solid var(--border) !important;
+        background: #f3f4f6 !important;
+        color: #1f2937 !important;
+        font-weight: 600 !important;
+        border-bottom: 2px solid #e5e7eb !important;
+        padding: 8px 12px !important;
     }
     
     .stDataFrame td, [data-testid="stDataFrame"] td {
-        background: var(--bg-card) !important;
-        color: var(--text-dark) !important;
-        border-bottom: 1px solid var(--border) !important;
+        background: #ffffff !important;
+        color: #1f2937 !important;
+        border-bottom: 1px solid #e5e7eb !important;
+        padding: 8px 12px !important;
     }
     
     .stDataFrame tr:hover td, [data-testid="stDataFrame"] tr:hover td {
-        background: var(--bg-main) !important;
+        background: #f9fafb !important;
+        color: #1f2937 !important;
     }
     
-    /* Glide Data Grid override for tables */
+    /* Glide Data Grid override for tables - Force dark text */
     [data-testid="stDataFrame"] > div {
-        background: var(--bg-card) !important;
+        background: #ffffff !important;
+        display: block !important;
+        color: #1f2937 !important;
     }
     
     .dvn-scroller {
-        background: var(--bg-card) !important;
+        background: #ffffff !important;
+        display: block !important;
+        color: #1f2937 !important;
+    }
+    
+    /* Force visibility of table cells */
+    [data-testid="stDataFrame"] .glideDataEditor {
+        background: #ffffff !important;
+        color: #1f2937 !important;
+    }
+    
+    /* Glide Data Grid cells */
+    [data-testid="stDataFrame"] .gdg-cell {
+        color: #1f2937 !important;
+        background: #ffffff !important;
+    }
+    
+    [data-testid="stDataFrame"] .gdg-cell-inner {
+        color: #1f2937 !important;
+    }
+    
+    [data-testid="stDataFrame"] canvas {
+        display: block !important;
+        opacity: 1 !important;
+    }
+    
+    /* Ensure table content is visible */
+    div[data-testid="stDataFrame"] div {
+        opacity: 1 !important;
+        visibility: visible !important;
+        color: #1f2937 !important;
+    }
+    
+    div[data-testid="stDataFrame"] span {
+        color: #1f2937 !important;
+    }
+    
+    /* Force text color in data grid */
+    .dvn-underlay span, .dvn-underlay div {
+        color: #1f2937 !important;
     }
     
     /* SelectBox / Dropdowns */
@@ -734,6 +788,29 @@ st.markdown("""
     
     ::-webkit-scrollbar-thumb:hover {
         background: var(--text-gray);
+    }
+    
+    /* Buttons */
+    .stButton button {
+        background: var(--primary);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1.5rem;
+        font-size: 1rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(155, 93, 229, 0.2);
+    }
+    
+    .stButton button:hover {
+        background: var(--primary-dark);
+        box-shadow: 0 4px 12px rgba(155, 93, 229, 0.3);
+        transform: translateY(-2px);
+    }
+    
+    .stButton button:active {
+        transform: translateY(0);
     }
 </style>
 """, unsafe_allow_html=True)
