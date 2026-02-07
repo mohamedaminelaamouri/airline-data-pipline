@@ -198,7 +198,7 @@ async def predict(request: PredictRequest):
             prediction=prediction,
             risk_category=risk_category,
             model_version=ml_service.model_version,
-            features_used=features
+            features_used=dict(zip(ml_service.feature_columns, features.flatten().tolist()))
         )
         
         # Check for alerts on high-risk predictions

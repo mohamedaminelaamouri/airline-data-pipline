@@ -185,7 +185,8 @@ services:
       MONGODB_URI: mongodb://mongodb:27017/
       MONGODB_DATABASE: airline_ml
     command: >
-      sh -c "pip install --no-cache-dir -r requirements-ml-api.txt && 
+      sh -c "apt-get update && apt-get install -y build-essential &&
+             pip install --no-cache-dir -r requirements-ml-api.txt && 
              uvicorn ml_api.app:app --host 0.0.0.0 --port 8001"
     networks:
       - airline-network
@@ -205,46 +206,23 @@ services:
   # LAYER 5: USER INTERFACES
   # ===========================================================================
 
-  # React Dashboard - ML Predictions (Port 3000)
-  ml_ui:
+  # React Dashboard - ML Platform UI (Port 3005)
+  ml_platform_ui:
     image: node:20-alpine
-    container_name: ml-ui
+    container_name: ml-platform-ui
     depends_on:
       - ml_api
-    working_dir: /app/ml_ui
+    working_dir: /app/ml_platform_ui
     volumes:
       - ./:/app
     ports:
-      - "3000:3000"
+      - "3005:3005"
     environment:
       VITE_API_URL: http://localhost:8001
-    command: sh -c "npm install && npm run dev"
+    command: sh -c "npm install && npm run dev -- --host"
     networks:
       - airline-network
-    mem_limit: 512m
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
-
-  # Prediction UI - ML Predictions Interface (Port 3001)
-  prediction_ui:
-    image: node:20-alpine
-    container_name: prediction-ui
-    depends_on:
-      - ml_api
-    working_dir: /app/prediction_ui
-    volumes:
-      - ./:/app
-    ports:
-      - "3001:3001"
-    environment:
-      VITE_API_URL: http://localhost:8001
-    command: sh -c "npm install && npm run dev"
-    networks:
-      - airline-network
-    mem_limit: 512m
+    mem_limit: 1024m
     logging:
       driver: json-file
       options:
