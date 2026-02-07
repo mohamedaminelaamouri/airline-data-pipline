@@ -346,6 +346,7 @@ class MLService:
     def __init__(self):
         self.model = load_model()
         self.feature_columns = FEATURE_COLUMNS
+        self.model_version = "v3"
     
     def is_valid_carrier(self, carrier: str) -> bool:
         """Check if carrier is valid (always True for hash-based encoding)."""
