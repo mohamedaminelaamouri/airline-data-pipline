@@ -17,7 +17,7 @@ export interface PredictionRequest {
     year: number;
 }
 
-export interface PredictionResponse {
+export interface PredictionResult {
     request_id: string;
     prediction: number;
     risk_category: string;
@@ -57,7 +57,7 @@ export interface AlertStats {
 }
 
 // API Functions
-export const predict = async (data: PredictionRequest): Promise<PredictionResponse> => {
+export const predict = async (data: PredictionRequest): Promise<PredictionResult> => {
     const response = await api.post('/predict', data);
     return response.data;
 };

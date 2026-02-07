@@ -17,7 +17,8 @@ import {
     Chip,
 } from '@mui/material';
 import { FlightTakeoff as FlightIcon, Send as SendIcon } from '@mui/icons-material';
-import { predict, getCarriers, getAirports, PredictionResponse } from '../services/api';
+import { predict, getCarriers, getAirports } from '../services/api';
+import type { PredictionResult } from '../services/api';
 
 const riskColors: Record<string, 'error' | 'warning' | 'info' | 'success'> = {
     critical: 'error',
@@ -32,7 +33,7 @@ export default function Prediction() {
     const [month, setMonth] = useState(new Date().getMonth() + 1);
     const [year, setYear] = useState(new Date().getFullYear());
     const [loading, setLoading] = useState(false);
-    const [result, setResult] = useState<PredictionResponse | null>(null);
+    const [result, setResult] = useState<PredictionResult | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [carriers, setCarriers] = useState<string[]>([]);
     const [airports, setAirports] = useState<string[]>([]);
@@ -165,9 +166,9 @@ export default function Prediction() {
                         <Card
                             sx={{
                                 background: `linear-gradient(135deg, ${result.risk_category === 'critical' ? '#f5576c, #f093fb' :
-                                        result.risk_category === 'high' ? '#f093fb, #f5576c' :
-                                            result.risk_category === 'medium' ? '#4facfe, #00f2fe' :
-                                                '#43e97b, #38f9d7'
+                                    result.risk_category === 'high' ? '#f093fb, #f5576c' :
+                                        result.risk_category === 'medium' ? '#4facfe, #00f2fe' :
+                                            '#43e97b, #38f9d7'
                                     })`,
                                 color: 'white',
                                 minHeight: 300,
