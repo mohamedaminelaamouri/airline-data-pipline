@@ -5,7 +5,11 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 import uuid
 import logging
+import traceback
 
+import joblib
+
+print(f"DEBUG: LOADED APP FROM {__file__}")
 try:
     from ml_api.utils.clickhouse_client import query_df
 except ImportError:
@@ -297,6 +301,7 @@ async def predict_batch(request: BatchPredictRequest):
         ml_service = get_ml_service()
         mongo_client = get_mongo_client()
     except Exception as e:
+        logger.error(f"Service init failed: {traceback.format_exc()}")
         raise HTTPException(status_code=503, detail=f"Service unavailable: {str(e)}")
     
     for idx, pred_request in enumerate(request.predictions):
@@ -330,7 +335,13 @@ async def predict_batch(request: BatchPredictRequest):
             
             prediction, risk_category = ml_service.predict(features)
             
+            logger.info(f"DEBUG: features type: {type(features)}")
+            logger.info(f"DEBUG: prediction type: {type(prediction)}")
+            
             # Store in MongoDB
+            features_dict = dict(zip(FEATURE_COLUMNS, features.flatten().tolist()))
+            logger.info(f"DEBUG: features_dict type: {type(features_dict)}")
+            
             mongo_client.store_prediction(
                 request_id=request_id,
                 carrier=pred_request.carrier,
@@ -339,15 +350,15 @@ async def predict_batch(request: BatchPredictRequest):
                 month=pred_request.month,
                 prediction=prediction,
                 risk_category=risk_category,
-                model_version=ml_service.model_version,
-                features_used=features
+                model_version="v3",
+                features_used=features_dict
             )
             
             results.append(PredictResponse(
                 request_id=request_id,
                 prediction=round(prediction, 4),
                 risk_category=risk_category,
-                model_version=ml_service.model_version,
+                model_version="v3",
                 timestamp=timestamp,
                 inputs={
                     "carrier": pred_request.carrier,
@@ -358,10 +369,12 @@ async def predict_batch(request: BatchPredictRequest):
             ))
             
         except Exception as e:
+            logger.error("DEBUG MARKER: Exception caught in batch loop")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             errors.append({
                 "index": idx,
-                "inputs": pred_request.dict(),
-                "error": str(e)
+                "error": str(e),
+                "traceback": traceback.format_exc()
             })
     
     logger.info(f"Batch {batch_id}: {len(results)} successful, {len(errors)} failed")

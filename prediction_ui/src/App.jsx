@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import PredictionForm from './components/PredictionForm'
 import BatchPrediction from './components/BatchPrediction'
 import PredictionHistory from './components/PredictionHistory'
+import Alerts from './components/Alerts'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001'
@@ -21,7 +22,8 @@ function App() {
   const tabs = [
     { id: 'single', label: '🎯 Single Prediction', icon: '🎯' },
     { id: 'batch', label: '📦 Batch Prediction', icon: '📦' },
-    { id: 'history', label: '📜 History', icon: '📜' }
+    { id: 'history', label: '📜 History', icon: '📜' },
+    { id: 'alerts', label: '🔔 Alerts', icon: '🔔' }
   ]
 
   return (
@@ -63,6 +65,9 @@ function App() {
         )}
         {activeTab === 'history' && (
           <PredictionHistory apiUrl={API_URL} metadata={metadata} />
+        )}
+        {activeTab === 'alerts' && (
+          <Alerts />
         )}
       </main>
 
