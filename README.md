@@ -78,10 +78,11 @@ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 │   └── package.json
 │
 ├── scripts/                # Scripts de traitement
-│   ├── build_gold_features.py   # Pipeline Medallion
-│   ├── train_model_2026.py      # Entraînement ML
-│   ├── load_historical_data.py  # Chargement CSV
-│   └── kafka_to_clickhouse.py   # Consumer Kafka
+│   ├── train_model_production.py # Entraînement XGBClassifier (production)
+│   ├── integrate_classification_model.py # Intégration du modèle de classification
+│   ├── populate_feature_store.py # Remplissage Feature Store (MongoDB)
+│   ├── load_historical_data.py   # Chargement CSV
+│   └── kafka_to_clickhouse.py    # Consumer Kafka
 │
 ├── config/                 # Configurations
 │   └── clickhouse/
@@ -174,18 +175,19 @@ npm run dev
 
 ## Machine Learning
 
-Le modèle XGBoost prédit les taux de retard par route (carrier + airport) pour 2026.
+Le pipeline ML utilise un modèle XGBoost Classifier pour prédire le risque de retard (classification).
 
 - **Train**: 2010-2018 (données historiques)
 - **Test**: 2019-2022 (validation)
-- **Prédiction**: 2026 (12 mois)
+- **Production**: modèle intégré et Feature Store alimenté
 
 Exécuter le pipeline ML :
 
 ```bash
 python scripts/load_historical_data.py
-python scripts/build_gold_features.py
-python scripts/train_model_2026.py
+python scripts/train_model_production.py
+python scripts/integrate_classification_model.py
+python scripts/populate_feature_store.py
 ```
 
 ## Ressources

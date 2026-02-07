@@ -31,6 +31,20 @@ export interface PredictionResult {
     };
 }
 
+export interface BatchPredictRequest {
+    predictions: PredictionRequest[];
+}
+
+export interface BatchPredictResponse {
+    batch_id: string;
+    total: number;
+    successful: number;
+    failed: number;
+    results: PredictionResult[];
+    errors: any[];
+    timestamp: string;
+}
+
 export interface AlertData {
     id: string;
     type: string;
@@ -59,6 +73,11 @@ export interface AlertStats {
 // API Functions
 export const predict = async (data: PredictionRequest): Promise<PredictionResult> => {
     const response = await api.post('/predict', data);
+    return response.data;
+};
+
+export const batchPredict = async (data: BatchPredictRequest): Promise<BatchPredictResponse> => {
+    const response = await api.post('/predict/batch', data);
     return response.data;
 };
 
