@@ -1,8 +1,6 @@
 {
-  "run_id": "20260205_232640",
-  "model_type": "XGBClassifier",
-  "target_threshold": 0.2,
-  "cutoff": 0.46999999999999986,
+  "run_id": "20260206_223721",
+  "feature_version": "v3",
   "feature_columns": [
     "year",
     "month",
@@ -11,8 +9,8 @@
     "is_summer",
     "is_winter",
     "is_holiday_season",
-    "carrier_encoded",
-    "airport_encoded",
+    "carrier_id",
+    "airport_id",
     "arr_flights",
     "log_arr_flights",
     "pair_lag1",
@@ -25,49 +23,122 @@
     "carrier_lag3_mean",
     "carrier_expanding_mean"
   ],
-  "n_features": 20,
-  "train_samples": 216019,
-  "val_samples": 63225,
-  "test_samples": 38773,
-  "train_time_seconds": 7.973504543304443,
+  "target_column": "is_delayed",
+  "target_threshold": 0.2,
+  "train_time_seconds": 19.092137336730957,
   "metrics": {
-    "test": {
-      "accuracy": 0.7902148402238671,
-      "roc_auc": 0.8105238697090874,
-      "precision": 0.7180368865270397,
-      "recall": 0.42054192603441964,
-      "f1_score": 0.5304237385983143
+    "train": {
+      "roc_auc": 0.8797077483530883,
+      "pr_auc": 0.8769521455916838,
+      "n_samples": 244263,
+      "positive_rate": 0.4811084773379513
     },
     "val": {
-      "accuracy": 0.74212732305259
+      "roc_auc": 0.803290086487453,
+      "pr_auc": 0.6871356364843981,
+      "n_samples": 79615,
+      "positive_rate": 0.3404886013942096
+    },
+    "test": {
+      "roc_auc": 0.724453734316407,
+      "pr_auc": 0.7113948507369576,
+      "n_samples": 22628,
+      "positive_rate": 0.49474102881385895
+    },
+    "optimal_cutoff": 0.5199999999999998,
+    "val_accuracy_at_cutoff": 0.7558500282610061,
+    "test_detailed": {
+      "TP": 7200,
+      "TN": 7830,
+      "FP": 3603,
+      "FN": 3995,
+      "accuracy": 0.6642213187201697,
+      "precision": 0.6664815329075257,
+      "recall": 0.643144260830728,
+      "f1": 0.6546049640876443
     }
   },
-  "confusion_matrix": {
-    "tn": 26045,
-    "fp": 1804,
-    "fn": 6330,
-    "tp": 4594
-  },
-  "feature_importance": {
-    "year": 0.03248608112335205,
-    "month": 0.06110236421227455,
-    "month_sin": 0.06307955086231232,
-    "month_cos": 0.06829235702753067,
-    "is_summer": 0.04824652522802353,
-    "is_winter": 0.045160770416259766,
-    "is_holiday_season": 0.036615047603845596,
-    "carrier_encoded": 0.017634356394410133,
-    "airport_encoded": 0.008747907355427742,
-    "arr_flights": 0.014269952662289143,
-    "log_arr_flights": 0.015039906837046146,
-    "pair_lag1": 0.19797703623771667,
-    "pair_lag3_mean": 0.0529596209526062,
-    "pair_expanding_mean": 0.03057326190173626,
-    "airport_lag1": 0.07441547513008118,
-    "airport_lag3_mean": 0.04491613805294037,
-    "airport_expanding_mean": 0.011573313735425472,
-    "carrier_lag1": 0.13538017868995667,
-    "carrier_lag3_mean": 0.02368282340466976,
-    "carrier_expanding_mean": 0.017847437411546707
-  }
+  "feature_importance": [
+    {
+      "feature": "pair_lag1",
+      "importance": 0.30321505665779114
+    },
+    {
+      "feature": "pair_lag3_mean",
+      "importance": 0.0968850627541542
+    },
+    {
+      "feature": "month_sin",
+      "importance": 0.08356790244579315
+    },
+    {
+      "feature": "month_cos",
+      "importance": 0.08086277544498444
+    },
+    {
+      "feature": "month",
+      "importance": 0.07511328905820847
+    },
+    {
+      "feature": "is_winter",
+      "importance": 0.053265877068042755
+    },
+    {
+      "feature": "is_summer",
+      "importance": 0.051115334033966064
+    },
+    {
+      "feature": "pair_expanding_mean",
+      "importance": 0.0500408373773098
+    },
+    {
+      "feature": "year",
+      "importance": 0.03238945081830025
+    },
+    {
+      "feature": "carrier_lag1",
+      "importance": 0.02736874856054783
+    },
+    {
+      "feature": "carrier_lag3_mean",
+      "importance": 0.02045074664056301
+    },
+    {
+      "feature": "carrier_expanding_mean",
+      "importance": 0.018817393109202385
+    },
+    {
+      "feature": "carrier_id",
+      "importance": 0.017515555024147034
+    },
+    {
+      "feature": "arr_flights",
+      "importance": 0.01590038649737835
+    },
+    {
+      "feature": "log_arr_flights",
+      "importance": 0.014345559291541576
+    },
+    {
+      "feature": "airport_expanding_mean",
+      "importance": 0.013353198766708374
+    },
+    {
+      "feature": "is_holiday_season",
+      "importance": 0.013186351396143436
+    },
+    {
+      "feature": "airport_lag1",
+      "importance": 0.012312871403992176
+    },
+    {
+      "feature": "airport_lag3_mean",
+      "importance": 0.011226403526961803
+    },
+    {
+      "feature": "airport_id",
+      "importance": 0.009067188017070293
+    }
+  ],
+  "notes": "Features computed in ClickHouse. No LabelEncoder - uses hash-based IDs."
 }

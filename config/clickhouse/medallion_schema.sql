@@ -189,74 +189,89 @@ PARTITION BY year
 SETTINGS index_granularity = 8192;
 
 -- ============================================================================
--- GOLD ML: Features pour Machine Learning
+-- GOLD ML: Features pour Machine Learning (Single Source of Truth)
 -- ============================================================================
 -- Objectif: Features engineered pour entraînement XGBoost
 -- Granularité: Par carrier, airport, année, mois
--- Usage: Training ML, Prédictions
+-- Usage: Training ML, Feature Store MongoDB, Prédictions
+--
+-- IMPORTANT: Cette table est la SOURCE UNIQUE de vérité pour les features ML.
+-- Aucun feature engineering ne doit être fait en Python.
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS gold_ml_features (
-    -- Identifiants
-    carrier String,
-    origin_airport String,
-    year UInt16,
-    month UInt8,
+    -- =================================================================
+    -- IDENTIFIANTS (clés primaires)
+    -- =================================================================
+    carrier String,                       -- Code compagnie (ex: 'AA', 'DL')
+    origin_airport String,                -- Code aéroport (ex: 'ATL', 'ORD')
+    year UInt16,                          -- Année (2003-2026)
+    month UInt8,                          -- Mois (1-12)
     
-    -- TARGET (variable à prédire)
-    delay_rate Float32,
+    -- =================================================================
+    -- ENCODAGE STABLE (remplace LabelEncoder)
+    -- =================================================================
+    -- Hash déterministe pour encoding catégoriel, stable entre sessions
+    carrier_id UInt32,                    -- cityHash64(carrier) % 100000
+    airport_id UInt32,                    -- cityHash64(origin_airport) % 100000
     
-    -- Features de volume
-    arr_flights UInt32,
-    arr_del15 UInt32,
-    log_flights Float32,             -- log(arr_flights + 1) pour normalisation
+    -- =================================================================
+    -- TARGET VARIABLE (variable à prédire)
+    -- =================================================================
+    delay_rate Float32,                   -- arr_del15 / arr_flights
+    is_delayed UInt8,                     -- 1 si delay_rate > 0.20 (seuil ML)
     
-    -- Lag Features (historique du couple carrier-airport)
-    pair_lag1 Float32,               -- delay_rate mois M-1
-    pair_lag2 Float32,               -- delay_rate mois M-2
-    pair_lag3 Float32,               -- delay_rate mois M-3
-    pair_lag6 Float32,               -- delay_rate mois M-6
-    pair_lag12 Float32,              -- delay_rate même mois année précédente
+    -- =================================================================
+    -- FEATURES DE VOLUME
+    -- =================================================================
+    arr_flights UInt32,                   -- Nombre total de vols arrivés
+    arr_del15 UInt32,                     -- Nombre de vols en retard (>15 min)
+    log_arr_flights Float32,              -- log(1 + arr_flights) - normalisation
     
-    -- Lag Features Carrier (moyenne de la compagnie)
-    carrier_lag1_mean Float32,
-    carrier_lag2_mean Float32,
-    carrier_lag3_mean Float32,
+    -- =================================================================
+    -- LAG FEATURES: Couple (Carrier + Airport)
+    -- Historique des retards pour cette paire spécifique
+    -- =================================================================
+    pair_lag1 Float32,                    -- delay_rate du mois M-1
+    pair_lag3_mean Float32,               -- Moyenne delay_rate des 3 derniers mois
+    pair_expanding_mean Float32,          -- Moyenne cumulative historique
     
-    -- Lag Features Airport (moyenne de l'aéroport)
-    airport_lag1 Float32,
-    airport_lag2 Float32,
-    airport_lag3 Float32,
+    -- =================================================================
+    -- LAG FEATURES: Niveau Airport
+    -- Tendance globale de l'aéroport
+    -- =================================================================
+    airport_lag1 Float32,                 -- delay_rate aéroport mois M-1
+    airport_lag3_mean Float32,            -- Moyenne aéroport 3 derniers mois
+    airport_expanding_mean Float32,       -- Moyenne aéroport historique
     
-    -- Rolling Averages (moyennes mobiles)
-    carrier_rolling_3m Float32,      -- Moyenne 3 derniers mois carrier
-    carrier_rolling_6m Float32,      -- Moyenne 6 derniers mois carrier
-    carrier_rolling_12m Float32,     -- Moyenne 12 derniers mois carrier
-    airport_rolling_3m Float32,
-    airport_rolling_6m Float32,
-    airport_rolling_12m Float32,
-    pair_rolling_3m Float32,
-    pair_rolling_6m Float32,
+    -- =================================================================
+    -- LAG FEATURES: Niveau Carrier
+    -- Tendance globale de la compagnie
+    -- =================================================================
+    carrier_lag1 Float32,                 -- delay_rate carrier mois M-1
+    carrier_lag3_mean Float32,            -- Moyenne carrier 3 derniers mois
+    carrier_expanding_mean Float32,       -- Moyenne carrier historique
     
-    -- Features temporelles
-    month_sin Float32,               -- sin(2*pi*month/12) pour cyclicité
-    month_cos Float32,               -- cos(2*pi*month/12)
-    is_summer UInt8,                 -- Juin-Août
-    is_winter UInt8,                 -- Décembre-Février
-    is_holiday_season UInt8,         -- Nov-Dec (Thanksgiving, Noël)
-    is_spring_break UInt8,           -- Mars
+    -- =================================================================
+    -- FEATURES TEMPORELLES / CYCLIQUES
+    -- Encodage cyclique pour capturer la saisonnalité
+    -- =================================================================
+    month_sin Float32,                    -- sin(2π × month/12) - cycle mois
+    month_cos Float32,                    -- cos(2π × month/12) - cycle mois
     
-    -- Features de tendance
-    carrier_trend_3m Float32,        -- Pente sur 3 mois
-    airport_trend_3m Float32,
+    -- =================================================================
+    -- FEATURES SAISONNIÈRES (One-Hot)
+    -- Indicateurs de périodes à haut risque de retards
+    -- =================================================================
+    is_summer UInt8,                      -- 1 si mois ∈ {6, 7, 8}
+    is_winter UInt8,                      -- 1 si mois ∈ {12, 1, 2}
+    is_holiday_season UInt8,              -- 1 si mois ∈ {11, 12}
     
-    -- Features d'interaction
-    carrier_x_month Float32,         -- Interaction carrier performance × mois
-    airport_x_month Float32,
-    
-    -- Métadonnées
-    feature_version String DEFAULT 'v2',
-    created_at DateTime DEFAULT now()
+    -- =================================================================
+    -- MÉTADONNÉES
+    -- =================================================================
+    feature_version String DEFAULT 'v3', -- Version des features
+    created_at DateTime DEFAULT now()     -- Timestamp de création
     
 ) ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (carrier, origin_airport, year, month)

@@ -14,9 +14,11 @@ except ImportError:
 try:
     from ml_api.utils.mongodb_client import get_mongo_client
     from ml_api.utils.ml_inference import get_ml_service, FEATURE_COLUMNS
+    from ml_api.alerts import get_alert_service, check_prediction_for_alerts, AlertFilter, AlertStatus, AlertType, AlertSeverity
 except ImportError:
     from utils.mongodb_client import get_mongo_client
     from utils.ml_inference import get_ml_service, FEATURE_COLUMNS
+    from alerts import get_alert_service, check_prediction_for_alerts, AlertFilter, AlertStatus, AlertType, AlertSeverity
 
 import pandas as pd
 import random
@@ -194,6 +196,22 @@ async def predict(request: PredictRequest):
             model_version=ml_service.model_version,
             features_used=features
         )
+        
+        # Check for alerts on high-risk predictions
+        try:
+            alert_service = get_alert_service()
+            alert = check_prediction_for_alerts(
+                prediction=prediction,
+                carrier=request.carrier,
+                airport=request.airport,
+                year=request.year,
+                month=request.month,
+                alert_service=alert_service
+            )
+            if alert:
+                logger.info(f"Alert created: {alert.type.value} for {request.carrier}/{request.airport}")
+        except Exception as e:
+            logger.warning(f"Failed to create alert: {e}")
         
         return PredictResponse(
             request_id=request_id,
@@ -983,3 +1001,109 @@ def cost_stats():
             "top_carriers_by_cost": carriers.to_dict(orient='records'),
             "top_airports_by_cost": airports.to_dict(orient='records')
         }
+
+
+# =============================================================================
+# ALERT ENDPOINTS
+# =============================================================================
+
+@app.get("/alerts")
+async def get_alerts(
+    type: Optional[str] = None,
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    carrier: Optional[str] = None,
+    airport: Optional[str] = None,
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0)
+):
+    """
+    Get alerts with optional filters.
+    
+    Filters:
+    - type: HIGH_DELAY_RISK, CRITICAL_DELAY, ANOMALY, DATA_QUALITY
+    - severity: critical, high, medium, low
+    - status: active, acknowledged, resolved
+    - carrier: carrier code
+    - airport: airport code
+    """
+    try:
+        alert_service = get_alert_service()
+        
+        filter_params = AlertFilter(
+            type=AlertType(type) if type else None,
+            severity=AlertSeverity(severity) if severity else None,
+            status=AlertStatus(status) if status else None,
+            carrier=carrier,
+            airport=airport,
+            limit=limit,
+            offset=offset
+        )
+        
+        alerts = alert_service.get_alerts(filter_params)
+        
+        return {
+            "alerts": alerts,
+            "count": len(alerts),
+            "limit": limit,
+            "offset": offset
+        }
+    except Exception as e:
+        logger.error(f"Failed to get alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/alerts/stats")
+async def get_alert_stats():
+    """Get alert statistics."""
+    try:
+        alert_service = get_alert_service()
+        stats = alert_service.get_stats()
+        
+        return {
+            "total": stats.total,
+            "active": stats.active,
+            "acknowledged": stats.acknowledged,
+            "resolved": stats.resolved,
+            "by_severity": stats.by_severity,
+            "by_type": stats.by_type
+        }
+    except Exception as e:
+        logger.error(f"Failed to get alert stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: str, user: str = "system"):
+    """Acknowledge an alert."""
+    try:
+        alert_service = get_alert_service()
+        success = alert_service.acknowledge_alert(alert_id, user)
+        
+        if success:
+            return {"status": "acknowledged", "alert_id": alert_id}
+        else:
+            raise HTTPException(status_code=404, detail="Alert not found or already acknowledged")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to acknowledge alert: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/alerts/{alert_id}/resolve")
+async def resolve_alert(alert_id: str):
+    """Resolve an alert."""
+    try:
+        alert_service = get_alert_service()
+        success = alert_service.resolve_alert(alert_id)
+        
+        if success:
+            return {"status": "resolved", "alert_id": alert_id}
+        else:
+            raise HTTPException(status_code=404, detail="Alert not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to resolve alert: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

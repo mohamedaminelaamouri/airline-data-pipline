@@ -1,10 +1,10 @@
 """
-Feature Store Population Script
-===============================
-Populates MongoDB feature_store collection with pre-computed features
-from ClickHouse gold_ml_features table.
+Feature Store Population Script (v3)
+====================================
+Populates MongoDB feature_store collection from ClickHouse gold_ml_features.
 
-This is a ONE-TIME sync script to enable MongoDB-only inference.
+IMPORTANT: This script performs a DIRECT COPY from ClickHouse.
+No feature engineering is done in Python - all features are pre-computed in SQL.
 
 Usage:
     python scripts/populate_feature_store.py
@@ -14,20 +14,60 @@ import sys
 from datetime import datetime
 
 import clickhouse_connect
-import numpy as np
-import pandas as pd
 from pymongo import MongoClient
+
+
+# Feature columns that must exist in gold_ml_features
+REQUIRED_FEATURE_COLUMNS = [
+    'carrier', 'origin_airport', 'year', 'month',
+    'carrier_id', 'airport_id',
+    'delay_rate', 'is_delayed',
+    'arr_flights', 'arr_del15', 'log_arr_flights',
+    'pair_lag1', 'pair_lag3_mean', 'pair_expanding_mean',
+    'airport_lag1', 'airport_lag3_mean', 'airport_expanding_mean',
+    'carrier_lag1', 'carrier_lag3_mean', 'carrier_expanding_mean',
+    'month_sin', 'month_cos',
+    'is_summer', 'is_winter', 'is_holiday_season'
+]
+
+# Feature columns to store in MongoDB (for ML serving)
+FEATURE_COLUMNS_FOR_MONGO = [
+    'year', 'month', 'month_sin', 'month_cos',
+    'is_summer', 'is_winter', 'is_holiday_season',
+    'carrier_id', 'airport_id',
+    'arr_flights', 'log_arr_flights',
+    'pair_lag1', 'pair_lag3_mean', 'pair_expanding_mean',
+    'airport_lag1', 'airport_lag3_mean', 'airport_expanding_mean',
+    'carrier_lag1', 'carrier_lag3_mean', 'carrier_expanding_mean',
+    'delay_rate', 'is_delayed'
+]
+
+
+def validate_schema(ch_client):
+    """Validate that gold_ml_features has all required columns."""
+    print("\n[1/5] Validating ClickHouse schema...")
+    
+    columns = ch_client.query("DESCRIBE gold_ml_features").result_rows
+    column_names = {col[0] for col in columns}
+    
+    missing = set(REQUIRED_FEATURE_COLUMNS) - column_names
+    if missing:
+        raise ValueError(f"Missing columns in gold_ml_features: {sorted(missing)}")
+    
+    print(f"   ✅ Schema valid: {len(column_names)} columns found")
+    return column_names
 
 
 def main():
     print("=" * 80)
-    print("FEATURE STORE POPULATION - ClickHouse -> MongoDB")
+    print("FEATURE STORE POPULATION v3 - ClickHouse -> MongoDB")
+    print("Direct copy, no Python feature engineering")
     print("=" * 80)
     
     # =========================================================================
     # Connect to databases
     # =========================================================================
-    print("\n[1/4] Connecting to databases...")
+    print("\n[2/5] Connecting to databases...")
     
     # ClickHouse
     ch_client = clickhouse_connect.get_client(
@@ -42,120 +82,69 @@ def main():
     mongo_db = mongo_client['airline_ml']
     feature_store = mongo_db['feature_store']
     
-    print("[OK] ClickHouse and MongoDB connected")
+    print("   ✅ ClickHouse and MongoDB connected")
     
     # =========================================================================
-    # Load data from ClickHouse
+    # Validate schema
     # =========================================================================
-    print("\n[2/4] Loading data from ClickHouse gold_ml_features...")
+    validate_schema(ch_client)
     
-    query = """
-    SELECT 
-        carrier,
-        origin_airport as airport,
-        year,
-        month,
-        delay_rate,
-        arr_flights,
-        arr_del15,
-        is_summer,
-        is_winter,
-        is_holiday_season
+    # =========================================================================
+    # Load data from ClickHouse (direct query, no Python processing)
+    # =========================================================================
+    print("\n[3/5] Loading features from ClickHouse gold_ml_features...")
+    
+    # Build column list for query
+    columns_sql = ', '.join(REQUIRED_FEATURE_COLUMNS)
+    
+    query = f"""
+    SELECT {columns_sql}
     FROM gold_ml_features
     ORDER BY year, month, carrier, origin_airport
     """
     
-    df = ch_client.query_df(query)
-    print(f"[OK] Loaded {len(df):,} records")
+    result = ch_client.query(query)
+    rows = result.result_rows
+    column_names = result.column_names
     
-    # =========================================================================
-    # Compute lag features
-    # =========================================================================
-    print("\n[3/4] Computing lag features...")
+    print(f"   ✅ Loaded {len(rows):,} records from ClickHouse")
     
-    # Sort for temporal calculations
-    df = df.sort_values(['carrier', 'airport', 'year', 'month'])
-    
-    # Period for sorting
-    df['period'] = df['year'] * 12 + df['month']
-    
-    # Lag features per pair (carrier + airport)
-    df['pair_lag1'] = df.groupby(['carrier', 'airport'])['delay_rate'].shift(1)
-    df['pair_lag3_mean'] = df.groupby(['carrier', 'airport'])['delay_rate'].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    )
-    df['pair_expanding_mean'] = df.groupby(['carrier', 'airport'])['delay_rate'].transform(
-        lambda x: x.shift(1).expanding(min_periods=1).mean()
-    )
-    
-    # Airport-level lags
-    df['airport_lag1'] = df.groupby('airport')['delay_rate'].shift(1)
-    df['airport_lag3_mean'] = df.groupby('airport')['delay_rate'].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    )
-    df['airport_expanding_mean'] = df.groupby('airport')['delay_rate'].transform(
-        lambda x: x.shift(1).expanding(min_periods=1).mean()
-    )
-    
-    # Carrier-level lags
-    df['carrier_lag1'] = df.groupby('carrier')['delay_rate'].shift(1)
-    df['carrier_lag3_mean'] = df.groupby('carrier')['delay_rate'].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    )
-    df['carrier_expanding_mean'] = df.groupby('carrier')['delay_rate'].transform(
-        lambda x: x.shift(1).expanding(min_periods=1).mean()
-    )
-    
-    # Log of arr_flights
-    df['log_arr_flights'] = np.log1p(df['arr_flights'].clip(lower=0))
-    
-    # Seasonality sin/cos
-    df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
-    df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
-    
-    # Fill NaN with global mean
-    global_mean = df['delay_rate'].mean()
-    lag_cols = [
-        'pair_lag1', 'pair_lag3_mean', 'pair_expanding_mean',
-        'airport_lag1', 'airport_lag3_mean', 'airport_expanding_mean',
-        'carrier_lag1', 'carrier_lag3_mean', 'carrier_expanding_mean'
-    ]
-    
-    for col in lag_cols:
-        df[col] = df[col].fillna(global_mean)
-    
-    print(f"[OK] Features computed: {len(df.columns)} columns")
+    if len(rows) == 0:
+        print("   ⚠️  No data in gold_ml_features. Run medallion_pipeline.py first.")
+        return
     
     # =========================================================================
     # Insert into MongoDB
     # =========================================================================
-    print("\n[4/4] Inserting into MongoDB feature_store...")
+    print("\n[4/5] Inserting into MongoDB feature_store...")
     
     # Clear existing data
-    feature_store.delete_many({})
-    print("   Cleared existing feature_store")
+    delete_result = feature_store.delete_many({})
+    print(f"   Cleared {delete_result.deleted_count:,} existing documents")
     
     # Prepare documents
-    feature_columns = [
-        'year', 'month', 'month_sin', 'month_cos',
-        'is_summer', 'is_winter', 'is_holiday_season',
-        'arr_flights', 'log_arr_flights',
-        'pair_lag1', 'pair_lag3_mean', 'pair_expanding_mean',
-        'airport_lag1', 'airport_lag3_mean', 'airport_expanding_mean',
-        'carrier_lag1', 'carrier_lag3_mean', 'carrier_expanding_mean',
-        'delay_rate'  # Keep for reference
-    ]
-    
     documents = []
-    for _, row in df.iterrows():
+    col_idx = {name: i for i, name in enumerate(column_names)}
+    
+    for row in rows:
+        # Build features dict from feature columns
+        features = {}
+        for col in FEATURE_COLUMNS_FOR_MONGO:
+            if col in col_idx:
+                val = row[col_idx[col]]
+                # Convert to Python types
+                if hasattr(val, 'item'):  # numpy types
+                    val = val.item()
+                features[col] = val
+        
         doc = {
-            "carrier": row['carrier'],
-            "airport": row['airport'],
-            "year": int(row['year']),
-            "month": int(row['month']),
-            "features": {col: float(row[col]) if isinstance(row[col], (int, float, np.number)) else row[col] 
-                        for col in feature_columns if col in row},
-            "created_at": datetime.utcnow().isoformat() + "Z"
+            "carrier": row[col_idx['carrier']],
+            "airport": row[col_idx['origin_airport']],
+            "year": int(row[col_idx['year']]),
+            "month": int(row[col_idx['month']]),
+            "features": features,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "feature_version": "v3"
         }
         documents.append(doc)
     
@@ -178,30 +167,57 @@ def main():
     feature_store.create_index([("year", -1), ("month", -1)])
     
     # =========================================================================
+    # Validation
+    # =========================================================================
+    print("\n[5/5] Validating integrity...")
+    
+    ch_count = ch_client.command("SELECT count() FROM gold_ml_features")
+    mongo_count = feature_store.count_documents({})
+    
+    if ch_count != mongo_count:
+        print(f"   ⚠️  Count mismatch: ClickHouse={ch_count:,}, MongoDB={mongo_count:,}")
+    else:
+        print(f"   ✅ Count match: {mongo_count:,} documents")
+    
+    # Sample verification
+    sample = feature_store.find_one()
+    sample_features = sample.get('features', {}) if sample else {}
+    expected_features = set(FEATURE_COLUMNS_FOR_MONGO)
+    actual_features = set(sample_features.keys())
+    
+    if expected_features != actual_features:
+        missing = expected_features - actual_features
+        extra = actual_features - expected_features
+        print(f"   ⚠️  Feature mismatch: missing={missing}, extra={extra}")
+    else:
+        print(f"   ✅ Feature columns match: {len(sample_features)} features per document")
+    
+    # =========================================================================
     # Summary
     # =========================================================================
     print("\n" + "=" * 80)
     print("[SUCCESS] FEATURE STORE POPULATION COMPLETE")
     print("=" * 80)
     
-    # Verification
-    count = feature_store.count_documents({})
-    sample = feature_store.find_one()
+    unique_carriers = feature_store.distinct("carrier")
+    unique_airports = feature_store.distinct("airport")
+    years = feature_store.distinct("year")
     
     print(f"""
 Summary:
-   - Total documents: {count:,}
-   - Carriers: {df['carrier'].nunique()}
-   - Airports: {df['airport'].nunique()}
-   - Year range: {df['year'].min()} - {df['year'].max()}
+   - Total documents: {mongo_count:,}
+   - Carriers: {len(unique_carriers)}
+   - Airports: {len(unique_airports)}
+   - Year range: {min(years)} - {max(years)}
+   - Features per doc: {len(sample_features)}
+   - Feature version: v3 (ClickHouse-computed)
    
 Sample document:
    - Carrier: {sample['carrier']}
    - Airport: {sample['airport']}
    - Year/Month: {sample['year']}/{sample['month']}
-   - Features: {len(sample['features'])} columns
    
-Ready for inference!
+Ready for ML serving!
 """)
 
 

@@ -1,0 +1,25 @@
+{
+  "feature_columns": [
+    "year",
+    "month",
+    "month_sin",
+    "month_cos",
+    "is_summer",
+    "is_winter",
+    "is_holiday_season",
+    "carrier_id",
+    "airport_id",
+    "arr_flights",
+    "log_arr_flights",
+    "pair_lag1",
+    "pair_lag3_mean",
+    "pair_expanding_mean",
+    "airport_lag1",
+    "airport_lag3_mean",
+    "airport_expanding_mean",
+    "carrier_lag1",
+    "carrier_lag3_mean",
+    "carrier_expanding_mean"
+  ],
+  "feature_version": "v3"
+}

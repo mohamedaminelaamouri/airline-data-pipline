@@ -7,8 +7,8 @@ Usage:
     python scripts/medallion_pipeline.py
 
 Architecture:
-    bronze_flights (raw) → silver_flights (clean) → gold_bi (PowerBI)
-                                                  → gold_ml_features (XGBoost)
+    bronze_flights (raw) -> silver_flights (clean) -> gold_bi (PowerBI)
+                                                  -> gold_ml_features (XGBoost)
 """
 
 import argparse
@@ -24,7 +24,7 @@ CLICKHOUSE_PORT = int(os.getenv('CLICKHOUSE_HTTP_PORT', '8123'))
 CLICKHOUSE_DB = 'airline_data'
 
 print("=" * 80)
-print("MEDALLION PIPELINE: Bronze → Silver → Gold")
+print("MEDALLION PIPELINE: Bronze -> Silver -> Gold")
 print("=" * 80)
 
 # Connexion ClickHouse
@@ -36,21 +36,24 @@ client = clickhouse_connect.get_client(
 print(f"✅ Connecté à ClickHouse: {CLICKHOUSE_HOST}:{CLICKHOUSE_PORT}")
 
 
+print(f"Connected to ClickHouse: {CLICKHOUSE_HOST}:{CLICKHOUSE_PORT}")
+
+
 # ============================================================================
-# STEP 1: Bronze → Silver (Nettoyage)
+# STEP 1: Bronze -> Silver (Nettoyage)
 # ============================================================================
 def bronze_to_silver():
-    """Nettoie les données brutes et les insère dans silver_flights."""
+    """Nettoyage des données brutes et insertion dans silver_flights."""
     print("\n" + "=" * 60)
-    print("[1/3] BRONZE → SILVER: Nettoyage des données")
+    print("[1/3] BRONZE -> SILVER: Nettoyage des données")
     print("=" * 60)
     
     # Vérifier si bronze a des données
     bronze_count = client.command("SELECT count() FROM bronze_flights")
-    print(f"  📊 Lignes dans bronze_flights: {bronze_count:,}")
+    print(f"  Lines in bronze_flights: {bronze_count:,}")
     
     if bronze_count == 0:
-        print("  ⚠️  Bronze vide, chargement depuis airline_delays...")
+        print("  Bronze empty, loading from airline_delays...")
         # Charger depuis la table existante airline_delays vers bronze
         client.command("""
             INSERT INTO bronze_flights (
@@ -69,10 +72,10 @@ def bronze_to_silver():
             FROM airline_delays
         """)
         bronze_count = client.command("SELECT count() FROM bronze_flights")
-        print(f"  ✅ Migré {bronze_count:,} lignes vers bronze")
+        print(f"  Migrated {bronze_count:,} lines to bronze")
     
     # Nettoyer et insérer dans silver
-    print("\n  🧹 Nettoyage en cours...")
+    print("\n  Cleaning in progress...")
     
     client.command("TRUNCATE TABLE silver_flights")
     
@@ -129,8 +132,8 @@ def bronze_to_silver():
     silver_count = client.command("SELECT count() FROM silver_flights")
     rejected = bronze_count - silver_count
     
-    print(f"  ✅ Silver créé: {silver_count:,} lignes")
-    print(f"  ❌ Lignes rejetées: {rejected:,} ({rejected/bronze_count*100:.1f}%)")
+    print(f"  Silver created: {silver_count:,} lines")
+    print(f"  Rejected lines: {rejected:,} ({rejected/bronze_count*100:.1f}%)")
     
     # Stats de qualité
     stats = client.query("""
@@ -142,20 +145,20 @@ def bronze_to_silver():
         FROM silver_flights
     """).result_rows[0]
     
-    print(f"\n  📈 Statistiques Silver:")
-    print(f"     Période: {stats[0]} - {stats[1]}")
-    print(f"     Compagnies: {stats[2]}")
-    print(f"     Aéroports: {stats[3]}")
-    print(f"     Taux retard moyen: {stats[4]*100:.1f}%")
+    print(f"\n  Silver Statistics:")
+    print(f"     Period: {stats[0]} - {stats[1]}")
+    print(f"     Carriers: {stats[2]}")
+    print(f"     Airports: {stats[3]}")
+    print(f"     Average delay rate: {stats[4]*100:.1f}%")
 
 
 # ============================================================================
-# STEP 2: Silver → Gold BI (Agrégations pour Power BI)
+# STEP 2: Silver -> Gold BI (Agrégations pour Power BI)
 # ============================================================================
 def silver_to_gold_bi():
     """Crée les KPIs agrégés pour Power BI."""
     print("\n" + "=" * 60)
-    print("[2/3] SILVER → GOLD BI: Agrégations Power BI")
+    print("[2/3] SILVER -> GOLD BI: Agrégations Power BI")
     print("=" * 60)
     
     client.command("TRUNCATE TABLE gold_bi")
@@ -236,7 +239,7 @@ def silver_to_gold_bi():
     """)
     
     gold_bi_count = client.command("SELECT count() FROM gold_bi")
-    print(f"  ✅ Gold BI créé: {gold_bi_count:,} agrégations")
+    print(f"  Gold BI created: {gold_bi_count:,} aggregations")
     
     # Stats
     stats = client.query("""
@@ -247,23 +250,94 @@ def silver_to_gold_bi():
         FROM gold_bi
     """).result_rows[0]
     
-    print(f"\n  📈 Statistiques Gold BI:")
-    print(f"     Taux retard moyen: {stats[0]*100:.1f}%")
-    print(f"     Taux retard max: {stats[1]*100:.1f}%")
-    print(f"     Vols totaux: {stats[2]:,}")
+    print(f"\n  Gold BI Statistics:")
+    print(f"     Average delay rate: {stats[0]*100:.1f}%")
+    print(f"     Max delay rate: {stats[1]*100:.1f}%")
+    print(f"     Total flights: {stats[2]:,}")
 
 
 # ============================================================================
-# STEP 3: Silver → Gold ML (Features pour Machine Learning)
+# STEP 3: Silver -> Gold ML (Features pour Machine Learning)
 # ============================================================================
 def silver_to_gold_ml():
-    """Crée les features ML avec lag et rolling averages."""
+    """
+    Crée les features ML avec tous les lag features et encoding stable.
+    
+    IMPORTANT: Cette fonction est la SOURCE UNIQUE de vérité pour les features ML.
+    Aucun feature engineering ne doit être fait en Python (ni dans training, ni dans serving).
+    
+    Features générées:
+    - carrier_id, airport_id: Encoding hash stable (remplace LabelEncoder)
+    - month_sin, month_cos: Encoding cyclique du mois
+    - is_summer, is_winter, is_holiday_season: Indicateurs saisonniers
+    - pair_lag1, pair_lag3_mean, pair_expanding_mean: Lags niveau paire
+    - airport_lag1, airport_lag3_mean, airport_expanding_mean: Lags niveau aéroport
+    - carrier_lag1, carrier_lag3_mean, carrier_expanding_mean: Lags niveau carrier
+    - is_delayed: Target binaire (delay_rate > 0.20)
+    """
     print("\n" + "=" * 60)
-    print("[3/3] SILVER → GOLD ML: Features Machine Learning")
+    print("[3/3] SILVER -> GOLD ML: Features Machine Learning (v3)")
     print("=" * 60)
     
-    # D'abord, créer une table temporaire avec les agrégations de base
-    print("  📊 Création des agrégations de base...")
+    # Recréer la table avec le nouveau schéma
+    print("  Creating gold_ml_features v3 schema...")
+    
+    client.command("DROP TABLE IF EXISTS gold_ml_features")
+    client.command("""
+        CREATE TABLE gold_ml_features (
+            -- Identifiants
+            carrier String,
+            origin_airport String,
+            year UInt16,
+            month UInt8,
+            
+            -- Encoding stable (remplace LabelEncoder)
+            carrier_id UInt32,
+            airport_id UInt32,
+            
+            -- Target
+            delay_rate Float32,
+            is_delayed UInt8,
+            
+            -- Volume
+            arr_flights UInt32,
+            arr_del15 UInt32,
+            log_arr_flights Float32,
+            
+            -- Lag features paire
+            pair_lag1 Float32,
+            pair_lag3_mean Float32,
+            pair_expanding_mean Float32,
+            
+            -- Lag features airport
+            airport_lag1 Float32,
+            airport_lag3_mean Float32,
+            airport_expanding_mean Float32,
+            
+            -- Lag features carrier
+            carrier_lag1 Float32,
+            carrier_lag3_mean Float32,
+            carrier_expanding_mean Float32,
+            
+            -- Temporel cyclique
+            month_sin Float32,
+            month_cos Float32,
+            
+            -- Saisonnier
+            is_summer UInt8,
+            is_winter UInt8,
+            is_holiday_season UInt8,
+            
+            -- Métadonnées
+            feature_version String DEFAULT 'v3',
+            created_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(created_at)
+        ORDER BY (carrier, origin_airport, year, month)
+        PARTITION BY year
+    """)
+
+    # Créer une table temporaire avec les agrégations de base
+    print("  Creating base aggregations...")
     
     client.command("DROP TABLE IF EXISTS temp_base_agg")
     client.command("""
@@ -283,118 +357,216 @@ def silver_to_gold_ml():
         INSERT INTO temp_base_agg
         SELECT
             carrier,
-            airport,
+            airport as origin_airport,
             year,
             month,
-            arr_flights,
-            arr_del15,
-            CASE WHEN arr_flights > 0 THEN arr_del15 / arr_flights ELSE 0 END AS delay_rate
+            toUInt32(total_flights) as arr_flights,
+            toUInt32(total_delays) as arr_del15,
+            CASE WHEN total_flights > 0 THEN total_delays / total_flights ELSE 0 END AS delay_rate
         FROM (
             SELECT
                 carrier,
                 airport,
                 year,
                 month,
-                sum(arr_flights) AS arr_flights,
-                sum(arr_del15) AS arr_del15
+                sum(arr_flights) as total_flights,
+                sum(arr_del15) as total_delays
             FROM silver_flights
             GROUP BY carrier, airport, year, month
         )
     """)
     
-    # Créer les features avec lag
-    print("  🔄 Calcul des features lag...")
-
+    # Calculer les moyennes par carrier pour les lag features carrier
+    print("  🔄 Calcul des moyennes carrier/airport...")
+    
+    client.command("DROP TABLE IF EXISTS temp_carrier_means")
     client.command("""
-        CREATE TABLE IF NOT EXISTS gold_ml_features (
+        CREATE TABLE temp_carrier_means (
             carrier String,
+            year UInt16,
+            month UInt8,
+            carrier_mean_delay Float32
+        ) ENGINE = MergeTree()
+        ORDER BY (carrier, year, month)
+    """)
+    
+    client.command("""
+        INSERT INTO temp_carrier_means
+        SELECT 
+            carrier,
+            year,
+            month,
+            avg(delay_rate) as carrier_mean_delay
+        FROM temp_base_agg
+        GROUP BY carrier, year, month
+    """)
+    
+    client.command("DROP TABLE IF EXISTS temp_airport_means")
+    client.command("""
+        CREATE TABLE temp_airport_means (
             origin_airport String,
             year UInt16,
             month UInt8,
-            delay_rate Float32,
-            arr_flights UInt32,
-            arr_del15 UInt32,
-            log_flights Float32,
-            pair_lag1 Float32,
-            pair_lag2 Float32,
-            pair_lag3 Float32,
-            pair_lag6 Float32,
-            pair_lag12 Float32,
-            carrier_lag1_mean Float32,
-            carrier_lag2_mean Float32,
-            carrier_lag3_mean Float32,
-            airport_lag1 Float32,
-            airport_lag2 Float32,
-            airport_lag3 Float32,
-            carrier_rolling_3m Float32,
-            carrier_rolling_6m Float32,
-            carrier_rolling_12m Float32,
-            airport_rolling_3m Float32,
-            airport_rolling_6m Float32,
-            airport_rolling_12m Float32,
-            pair_rolling_3m Float32,
-            pair_rolling_6m Float32,
-            month_sin Float32,
-            month_cos Float32,
-            is_summer UInt8,
-            is_winter UInt8,
-            is_holiday_season UInt8,
-            is_spring_break UInt8,
-            carrier_trend_3m Float32,
-            airport_trend_3m Float32,
-            carrier_x_month Float32,
-            airport_x_month Float32,
-            feature_version String DEFAULT 'v2',
-            created_at DateTime DEFAULT now()
-        ) ENGINE = ReplacingMergeTree(created_at)
-        ORDER BY (carrier, origin_airport, year, month)
-        PARTITION BY year
+            airport_mean_delay Float32
+        ) ENGINE = MergeTree()
+        ORDER BY (origin_airport, year, month)
     """)
-
-    client.command("TRUNCATE TABLE gold_ml_features")
+    
     client.command("""
-        INSERT INTO gold_ml_features (
-            carrier, origin_airport, year, month,
-            delay_rate, arr_flights, arr_del15, log_flights,
-            pair_lag1, pair_lag2, pair_lag3, pair_lag6, pair_lag12,
-            month_sin, month_cos,
-            is_summer, is_winter, is_holiday_season, is_spring_break
-        )
-        SELECT
-            carrier,
+        INSERT INTO temp_airport_means
+        SELECT 
             origin_airport,
             year,
             month,
-            delay_rate,
-            arr_flights,
-            arr_del15,
-            log(arr_flights + 1) AS log_flights,
-            
-            -- Lag features (mois précédents)
-            ifNull(lagInFrame(delay_rate, 1) OVER w, delay_rate) AS pair_lag1,
-            ifNull(lagInFrame(delay_rate, 2) OVER w, delay_rate) AS pair_lag2,
-            ifNull(lagInFrame(delay_rate, 3) OVER w, delay_rate) AS pair_lag3,
-            ifNull(lagInFrame(delay_rate, 6) OVER w, delay_rate) AS pair_lag6,
-            ifNull(lagInFrame(delay_rate, 12) OVER w, delay_rate) AS pair_lag12,
-            
-            -- Features cycliques pour le mois
-            sin(2 * pi() * month / 12) AS month_sin,
-            cos(2 * pi() * month / 12) AS month_cos,
-            
-            -- Features saisonnières
-            CASE WHEN month IN (6, 7, 8) THEN 1 ELSE 0 END AS is_summer,
-            CASE WHEN month IN (12, 1, 2) THEN 1 ELSE 0 END AS is_winter,
-            CASE WHEN month IN (11, 12) THEN 1 ELSE 0 END AS is_holiday_season,
-            CASE WHEN month = 3 THEN 1 ELSE 0 END AS is_spring_break
+            avg(delay_rate) as airport_mean_delay
         FROM temp_base_agg
-        WINDOW w AS (PARTITION BY carrier, origin_airport ORDER BY year, month)
+        GROUP BY origin_airport, year, month
     """)
     
-    # Nettoyer
+    # Insérer les features complètes avec window functions
+    print("  🔄 Calcul des lag features et insertion...")
+    
+    client.command("""
+        INSERT INTO gold_ml_features (
+            carrier, origin_airport, year, month,
+            carrier_id, airport_id,
+            delay_rate, is_delayed,
+            arr_flights, arr_del15, log_arr_flights,
+            pair_lag1, pair_lag3_mean, pair_expanding_mean,
+            airport_lag1, airport_lag3_mean, airport_expanding_mean,
+            carrier_lag1, carrier_lag3_mean, carrier_expanding_mean,
+            month_sin, month_cos,
+            is_summer, is_winter, is_holiday_season
+        )
+        WITH 
+        -- Calcul des lag features niveau paire avec window functions
+        pair_features AS (
+            SELECT
+                carrier,
+                origin_airport,
+                year,
+                month,
+                delay_rate,
+                arr_flights,
+                arr_del15,
+                -- Lag 1 mois (valeur du mois précédent)
+                lagInFrame(delay_rate, 1) OVER w AS pair_lag1_raw,
+                -- Moyenne des 3 derniers mois (M-1, M-2, M-3)
+                avg(delay_rate) OVER (
+                    PARTITION BY carrier, origin_airport 
+                    ORDER BY year, month 
+                    ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+                ) AS pair_lag3_mean_raw,
+                -- Moyenne cumulative (tous les mois précédents)
+                avg(delay_rate) OVER (
+                    PARTITION BY carrier, origin_airport 
+                    ORDER BY year, month 
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                ) AS pair_expanding_mean_raw
+            FROM temp_base_agg
+            WINDOW w AS (PARTITION BY carrier, origin_airport ORDER BY year, month)
+        ),
+        -- Calcul des lag features niveau carrier
+        carrier_features AS (
+            SELECT
+                carrier,
+                year,
+                month,
+                lagInFrame(carrier_mean_delay, 1) OVER w AS carrier_lag1_raw,
+                avg(carrier_mean_delay) OVER (
+                    PARTITION BY carrier 
+                    ORDER BY year, month 
+                    ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+                ) AS carrier_lag3_mean_raw,
+                avg(carrier_mean_delay) OVER (
+                    PARTITION BY carrier 
+                    ORDER BY year, month 
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                ) AS carrier_expanding_mean_raw
+            FROM temp_carrier_means
+            WINDOW w AS (PARTITION BY carrier ORDER BY year, month)
+        ),
+        -- Calcul des lag features niveau airport
+        airport_features AS (
+            SELECT
+                origin_airport,
+                year,
+                month,
+                lagInFrame(airport_mean_delay, 1) OVER w AS airport_lag1_raw,
+                avg(airport_mean_delay) OVER (
+                    PARTITION BY origin_airport 
+                    ORDER BY year, month 
+                    ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+                ) AS airport_lag3_mean_raw,
+                avg(airport_mean_delay) OVER (
+                    PARTITION BY origin_airport 
+                    ORDER BY year, month 
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                ) AS airport_expanding_mean_raw
+            FROM temp_airport_means
+            WINDOW w AS (PARTITION BY origin_airport ORDER BY year, month)
+        )
+        SELECT
+            pf.carrier,
+            pf.origin_airport,
+            pf.year,
+            pf.month,
+            
+            -- Encoding stable (hash déterministe)
+            toUInt32(cityHash64(pf.carrier) % 100000) AS carrier_id,
+            toUInt32(cityHash64(pf.origin_airport) % 100000) AS airport_id,
+            
+            -- Target
+            pf.delay_rate,
+            CASE WHEN pf.delay_rate > 0.20 THEN 1 ELSE 0 END AS is_delayed,
+            
+            -- Volume
+            pf.arr_flights,
+            pf.arr_del15,
+            toFloat32(log(pf.arr_flights + 1)) AS log_arr_flights,
+            
+            -- Pair lag features (avec fallback sur delay_rate courant si NULL)
+            toFloat32(ifNull(pf.pair_lag1_raw, pf.delay_rate)) AS pair_lag1,
+            toFloat32(ifNull(pf.pair_lag3_mean_raw, pf.delay_rate)) AS pair_lag3_mean,
+            toFloat32(ifNull(pf.pair_expanding_mean_raw, pf.delay_rate)) AS pair_expanding_mean,
+            
+            -- Airport lag features
+            toFloat32(ifNull(af.airport_lag1_raw, pf.delay_rate)) AS airport_lag1,
+            toFloat32(ifNull(af.airport_lag3_mean_raw, pf.delay_rate)) AS airport_lag3_mean,
+            toFloat32(ifNull(af.airport_expanding_mean_raw, pf.delay_rate)) AS airport_expanding_mean,
+            
+            -- Carrier lag features
+            toFloat32(ifNull(cf.carrier_lag1_raw, pf.delay_rate)) AS carrier_lag1,
+            toFloat32(ifNull(cf.carrier_lag3_mean_raw, pf.delay_rate)) AS carrier_lag3_mean,
+            toFloat32(ifNull(cf.carrier_expanding_mean_raw, pf.delay_rate)) AS carrier_expanding_mean,
+            
+            -- Encoding cyclique du mois
+            toFloat32(sin(2 * pi() * pf.month / 12)) AS month_sin,
+            toFloat32(cos(2 * pi() * pf.month / 12)) AS month_cos,
+            
+            -- Indicateurs saisonniers
+            CASE WHEN pf.month IN (6, 7, 8) THEN 1 ELSE 0 END AS is_summer,
+            CASE WHEN pf.month IN (12, 1, 2) THEN 1 ELSE 0 END AS is_winter,
+            CASE WHEN pf.month IN (11, 12) THEN 1 ELSE 0 END AS is_holiday_season
+            
+        FROM pair_features pf
+        LEFT JOIN carrier_features cf ON 
+            pf.carrier = cf.carrier AND 
+            pf.year = cf.year AND 
+            pf.month = cf.month
+        LEFT JOIN airport_features af ON 
+            pf.origin_airport = af.origin_airport AND 
+            pf.year = af.year AND 
+            pf.month = af.month
+    """)
+    
+    # Nettoyer les tables temporaires
     client.command("DROP TABLE IF EXISTS temp_base_agg")
+    client.command("DROP TABLE IF EXISTS temp_carrier_means")
+    client.command("DROP TABLE IF EXISTS temp_airport_means")
     
     gold_ml_count = client.command("SELECT count() FROM gold_ml_features")
-    print(f"  ✅ Gold ML créé: {gold_ml_count:,} features")
+    print(f"  [OK] Gold ML cree: {gold_ml_count:,} features (version v3)")
     
     # Stats
     stats = client.query("""
@@ -402,14 +574,19 @@ def silver_to_gold_ml():
             countDistinct(carrier) as carriers,
             countDistinct(origin_airport) as airports,
             min(year) as min_year,
-            max(year) as max_year
+            max(year) as max_year,
+            avg(delay_rate) as avg_delay_rate,
+            countIf(is_delayed = 1) as delayed_count,
+            count() as total
         FROM gold_ml_features
     """).result_rows[0]
     
-    print(f"\n  📈 Statistiques Gold ML:")
+    print(f"\n  [..] Statistiques Gold ML v3:")
     print(f"     Carriers: {stats[0]}")
     print(f"     Airports: {stats[1]}")
     print(f"     Période: {stats[2]} - {stats[3]}")
+    print(f"     Taux retard moyen: {stats[4]*100:.1f}%")
+    print(f"     Lignes is_delayed=1: {stats[5]:,} / {stats[6]:,} ({stats[5]/stats[6]*100:.1f}%)")
 
 
 # ============================================================================
