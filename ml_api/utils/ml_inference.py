@@ -16,6 +16,7 @@ import logging
 import joblib
 import numpy as np
 import pandas as pd
+from cityhash import CityHash64
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,20 +49,19 @@ _hash_mappings = None
 
 def get_carrier_id(carrier: str) -> int:
     """
-    Generate deterministic carrier ID using hash.
-    Mimics ClickHouse: cityHash64(carrier) % 100000
+    Generate deterministic carrier ID using CityHash64.
+    Matches ClickHouse: cityHash64(carrier) % 100000
     """
-    # Python equivalent of cityHash64 % 100000
-    # We use a consistent hash function
-    return hash(carrier) % 100000
+    # Use CityHash64 to match ClickHouse exactly
+    return CityHash64(carrier.encode('utf-8')) % 100000
 
 
 def get_airport_id(airport: str) -> int:
     """
-    Generate deterministic airport ID using hash.
-    Mimics ClickHouse: cityHash64(airport) % 100000
+    Generate deterministic airport ID using CityHash64.
+    Matches ClickHouse: cityHash64(airport) % 100000
     """
-    return hash(airport) % 100000
+    return CityHash64(airport.encode('utf-8')) % 100000
 
 
 def load_model():
