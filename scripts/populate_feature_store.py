@@ -54,7 +54,7 @@ def validate_schema(ch_client):
     if missing:
         raise ValueError(f"Missing columns in gold_ml_features: {sorted(missing)}")
     
-    print(f"   ✅ Schema valid: {len(column_names)} columns found")
+    print(f"   [OK] Schema valid: {len(column_names)} columns found")
     return column_names
 
 
@@ -107,10 +107,10 @@ def main():
     rows = result.result_rows
     column_names = result.column_names
     
-    print(f"   ✅ Loaded {len(rows):,} records from ClickHouse")
+    print(f"   [OK] Loaded {len(rows):,} records from ClickHouse")
     
     if len(rows) == 0:
-        print("   ⚠️  No data in gold_ml_features. Run medallion_pipeline.py first.")
+        print("   [WARN] No data in gold_ml_features. Run medallion_pipeline.py first.")
         return
     
     # =========================================================================
@@ -175,9 +175,9 @@ def main():
     mongo_count = feature_store.count_documents({})
     
     if ch_count != mongo_count:
-        print(f"   ⚠️  Count mismatch: ClickHouse={ch_count:,}, MongoDB={mongo_count:,}")
+        print(f"   [WARN] Count mismatch: ClickHouse={ch_count:,}, MongoDB={mongo_count:,}")
     else:
-        print(f"   ✅ Count match: {mongo_count:,} documents")
+        print(f"   [OK] Count match: {mongo_count:,} documents")
     
     # Sample verification
     sample = feature_store.find_one()
@@ -188,9 +188,9 @@ def main():
     if expected_features != actual_features:
         missing = expected_features - actual_features
         extra = actual_features - expected_features
-        print(f"   ⚠️  Feature mismatch: missing={missing}, extra={extra}")
+        print(f"   [WARN] Feature mismatch: missing={missing}, extra={extra}")
     else:
-        print(f"   ✅ Feature columns match: {len(sample_features)} features per document")
+        print(f"   [OK] Feature columns match: {len(sample_features)} features per document")
     
     # =========================================================================
     # Summary
