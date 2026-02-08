@@ -30,7 +30,7 @@ Prédire la **probabilité de retards aériens** pour une combinaison `(carrier,
 | **ML Training** | Python, XGBoost, Pandas | Entraînement du modèle |
 | **ML Serving** | FastAPI, Joblib | API de prédiction |
 | **Frontend** | React, Vite | Interface utilisateur |
-| **Monitoring** | Streamlit | Dashboard temps réel |
+| **Monitoring** | Console Python | Monitoring Kafka temps réel |
 
 ---
 
@@ -472,20 +472,18 @@ ynov-data-pipeline-main/
 │   │   ├── model.pkl
 │   │   ├── imputer.pkl
 │   │   └── label_encoder_*.pkl
-│   ├── notebooks/
-│   │   └── training_complete.py
 │   └── src/yno_ml/
 │       ├── features.py         # Feature engineering
 │       └── train.py            # Training script
 │
 ├── scripts/
 │   ├── populate_feature_store.py  # Sync ClickHouse → MongoDB
-│   └── train_model_2026.py
+│   └── train_model_production.py
 │
-├── realtime_app.py             # Streamlit dashboard
+├── realtime_app.py             # Console Kafka monitor
 │
 └── docs/
-    └── ML_SERVING_LAYER.md     # Documentation API
+    └── ML_COMPREHENSIVE_GUIDE.md
 ```
 
 ---
@@ -498,7 +496,7 @@ ynov-data-pipeline-main/
 | Feature Store | MongoDB | 27017 | Stockage temps réel (OLTP) |
 | ML Model | XGBoost | - | Classification binaire |
 | API | FastAPI | 8001 | Serving layer |
-| UI | React/Vite | 3001 | Interface prédiction |
-| Dashboard | Streamlit | 8501 | Monitoring temps réel |
+| UI | React/Vite | 3000 | Interface prédiction |
+| Monitor | Console Python | - | Monitoring Kafka |
 | Streaming | Kafka | 9092 | Messages temps réel |
 | ETL | NiFi | 8080 | Ingestion données |
