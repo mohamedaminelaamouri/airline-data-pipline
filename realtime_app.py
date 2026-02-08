@@ -1,13 +1,24 @@
 """
 Airline Data Pipeline - Real-time Dashboard
-Professional Kafka + ClickHouse Monitoring
+Kafka Monitoring + ClickHouse Analytics
 """
 
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
-from typing import Dict
+from datetime import datetime, timedelta
+from typing import Dict, Deque
+from dataclasses import dataclass
+from collections import deque
+import threading
+import json
+import time
+
+try:
+    from confluent_kafka import Consumer
+    KAFKA_AVAILABLE = True
+except ImportError:
+    KAFKA_AVAILABLE = False
 
 try:
     import clickhouse_connect
@@ -24,6 +35,9 @@ except ImportError:
 # =============================================================================
 # CONFIG
 # =============================================================================
+KAFKA_BOOTSTRAP = "localhost:9092"
+KAFKA_TOPIC = "airline-delays"
+KAFKA_GROUP = "streamlit-monitor"
 CLICKHOUSE_HOST = "localhost"
 CLICKHOUSE_PORT = 8123
 CLICKHOUSE_DB = "airline_data"
@@ -31,21 +45,65 @@ CLICKHOUSE_DB = "airline_data"
 st.set_page_config(page_title="Airline Monitor", page_icon="A", layout="wide", initial_sidebar_state="collapsed")
 
 # =============================================================================
+# KAFKA STATE
+# =============================================================================
+@st.cache_resource
+def get_kafka_state() -> Dict:
+    return {"running": False, "total": 0, "rate": 0, "last": None, "start": None, "buffer": deque(maxlen=60)}
+
+def kafka_loop(state: Dict):
+    if not KAFKA_AVAILABLE:
+        return
+    try:
+        c = Consumer({'bootstrap.servers': KAFKA_BOOTSTRAP, 'group.id': KAFKA_GROUP, 'auto.offset.reset': 'latest'})
+        c.subscribe([KAFKA_TOPIC])
+        state["running"] = True
+        state["start"] = datetime.now()
+        min_count = 0
+        current_min = datetime.now().replace(second=0, microsecond=0)
+        
+        while state["running"]:
+            msg = c.poll(1.0)
+            now = datetime.now().replace(second=0, microsecond=0)
+            if now != current_min:
+                state["buffer"].append({"t": current_min, "c": min_count})
+                state["rate"] = min_count
+                current_min = now
+                min_count = 0
+            if msg and not msg.error():
+                state["total"] += 1
+                state["last"] = datetime.now()
+                min_count += 1
+    except:
+        state["running"] = False
+    finally:
+        try:
+            c.close()
+        except:
+            pass
+
+def start_kafka():
+    state = get_kafka_state()
+    if not state["running"] and KAFKA_AVAILABLE:
+        threading.Thread(target=kafka_loop, args=(state,), daemon=True).start()
+        time.sleep(0.3)
+
+# =============================================================================
 # HELPERS
 # =============================================================================
-def format_number(n) -> str:
+def fmt(n) -> str:
     n = int(n)
     if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
+        return f"{n/1_000_000:.1f}M"
     elif n >= 1_000:
-        return f"{n / 1_000:.1f}K"
+        return f"{n/1_000:.1f}K"
     return str(n)
 
 # =============================================================================
 # CLICKHOUSE
 # =============================================================================
 @st.cache_resource
-def get_clickhouse_client():
+def get_ch():
     if not CLICKHOUSE_AVAILABLE:
         return None
     try:
@@ -54,11 +112,11 @@ def get_clickhouse_client():
         return None
 
 def get_stats():
-    client = get_clickhouse_client()
-    if not client:
+    ch = get_ch()
+    if not ch:
         return {"records": 0, "flights": 0, "delayed": 0, "rate": 0, "carriers": 0, "airports": 0}
     try:
-        r = client.query("SELECT count(), sum(arr_flights), sum(arr_del15), count(DISTINCT carrier), count(DISTINCT airport) FROM flights")
+        r = ch.query("SELECT count(), sum(arr_flights), sum(arr_del15), count(DISTINCT carrier), count(DISTINCT airport) FROM flights")
         row = r.result_rows[0]
         records, flights, delayed = int(row[0]), int(row[1] or 0), int(row[2] or 0)
         return {"records": records, "flights": flights, "delayed": delayed, "rate": delayed/flights if flights else 0, "carriers": int(row[3] or 0), "airports": int(row[4] or 0)}
@@ -66,24 +124,23 @@ def get_stats():
         return {"records": 0, "flights": 0, "delayed": 0, "rate": 0, "carriers": 0, "airports": 0}
 
 def get_monthly():
-    client = get_clickhouse_client()
-    if not client:
+    ch = get_ch()
+    if not ch:
         return pd.DataFrame()
     try:
-        r = client.query("SELECT month, sum(arr_flights), sum(arr_del15) FROM flights GROUP BY month ORDER BY month")
+        r = ch.query("SELECT month, sum(arr_flights), sum(arr_del15) FROM flights GROUP BY month ORDER BY month")
         if r.result_rows:
-            df = pd.DataFrame(r.result_rows, columns=['month', 'flights', 'delayed'])
-            return df
+            return pd.DataFrame(r.result_rows, columns=['month', 'flights', 'delayed'])
     except:
         pass
     return pd.DataFrame()
 
 def get_carriers():
-    client = get_clickhouse_client()
-    if not client:
+    ch = get_ch()
+    if not ch:
         return pd.DataFrame()
     try:
-        r = client.query("SELECT carrier, sum(arr_flights), sum(arr_del15) FROM flights GROUP BY carrier ORDER BY sum(arr_flights) DESC LIMIT 10")
+        r = ch.query("SELECT carrier, sum(arr_flights), sum(arr_del15) FROM flights GROUP BY carrier ORDER BY sum(arr_flights) DESC LIMIT 10")
         if r.result_rows:
             df = pd.DataFrame(r.result_rows, columns=['carrier', 'flights', 'delayed'])
             df['delay_rate'] = df['delayed'] / df['flights'].replace(0, 1)
@@ -101,15 +158,31 @@ st.markdown("""
     * { font-family: 'Inter', sans-serif; }
     .stApp { background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%); }
     
-    .header { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; }
-    .header h1 { font-size: 1.75rem; font-weight: 700; color: white; margin: 0; }
-    .header p { color: rgba(255,255,255,0.8); margin: 0.25rem 0 0; font-size: 0.9rem; }
+    .header { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); padding: 1.25rem 1.5rem; border-radius: 12px; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { font-size: 1.5rem; font-weight: 700; color: white; margin: 0; }
+    .header p { color: rgba(255,255,255,0.7); margin: 0; font-size: 0.8rem; }
+    
+    .kafka-bar { background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 10px; padding: 0.75rem 1rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+    .kafka-info { display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap; }
+    .kafka-item { display: flex; flex-direction: column; align-items: center; }
+    .kafka-val { font-size: 1.25rem; font-weight: 600; color: #60a5fa; }
+    .kafka-lbl { font-size: 0.65rem; color: #64748b; text-transform: uppercase; }
+    .kafka-config { display: flex; gap: 1rem; font-size: 0.7rem; color: #64748b; }
+    .kafka-config span { background: rgba(15, 23, 42, 0.5); padding: 0.25rem 0.5rem; border-radius: 4px; }
+    
+    .status { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.6rem; border-radius: 20px; font-size: 0.75rem; font-weight: 500; }
+    .status-on { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .status-off { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; animation: pulse 2s infinite; }
+    .status-on .dot { background: #10b981; }
+    .status-off .dot { background: #ef4444; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     
     .metric { background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(148, 163, 184, 0.1); border-radius: 10px; padding: 1rem; text-align: center; }
-    .metric-val { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .metric-lbl { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; margin-top: 0.25rem; }
+    .metric-val { font-size: 1.75rem; font-weight: 700; background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .metric-lbl { color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; margin-top: 0.2rem; }
     
-    .section { font-size: 1rem; font-weight: 600; color: #f1f5f9; margin: 1rem 0 0.5rem; }
+    .section { font-size: 0.95rem; font-weight: 600; color: #f1f5f9; margin: 0.75rem 0 0.5rem; }
     h1, h2, h3 { color: #f1f5f9 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -117,6 +190,18 @@ st.markdown("""
 # =============================================================================
 # CHARTS
 # =============================================================================
+def throughput_chart(buf):
+    if not buf:
+        fig = go.Figure()
+        fig.add_annotation(text="Collecting data...", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(color="#64748b"))
+        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=100, margin=dict(l=10, r=10, t=10, b=20))
+        return fig
+    df = pd.DataFrame(list(buf))
+    fig = go.Figure(go.Scatter(x=df['t'], y=df['c'], mode='lines', fill='tozeroy', line=dict(color='#3b82f6', width=2), fillcolor='rgba(59,130,246,0.15)'))
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=100, margin=dict(l=10, r=10, t=10, b=20),
+                      xaxis=dict(showgrid=False, tickformat='%H:%M'), yaxis=dict(gridcolor='rgba(148,163,184,0.1)', title=dict(text='msg/min', font=dict(size=9))))
+    return fig
+
 def gauge(val):
     color = "#10b981" if val < 15 else "#f59e0b" if val < 25 else "#ef4444"
     fig = go.Figure(go.Indicator(mode="gauge+number", value=val, number={'suffix': '%', 'font': {'color': '#f1f5f9', 'size': 28}},
@@ -134,7 +219,7 @@ def monthly_chart(df):
     fig.add_trace(go.Bar(x=df['m'], y=df['flights'] - df['delayed'], name='On Time', marker_color='#10b981'))
     fig.add_trace(go.Bar(x=df['m'], y=df['delayed'], name='Delayed', marker_color='#ef4444'))
     fig.update_layout(barmode='stack', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font={'color': '#94a3b8'},
-                      legend=dict(orientation='h', y=1.1, x=0.5, xanchor='center'), height=250, margin=dict(l=20, r=20, t=20, b=30),
+                      legend=dict(orientation='h', y=1.1, x=0.5, xanchor='center'), height=220, margin=dict(l=20, r=20, t=20, b=30),
                       xaxis=dict(showgrid=False), yaxis=dict(gridcolor='rgba(148,163,184,0.1)'))
     return fig
 
@@ -146,7 +231,7 @@ def carrier_chart(df):
     fig = go.Figure(go.Bar(x=df['delay_rate'] * 100, y=df['carrier'], orientation='h', marker_color=colors,
                            text=[f"{r*100:.1f}%" for r in df['delay_rate']], textposition='outside', textfont={'color': '#94a3b8'}))
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font={'color': '#94a3b8'},
-                      height=300, margin=dict(l=20, r=50, t=10, b=20), xaxis=dict(gridcolor='rgba(148,163,184,0.1)'), yaxis=dict(showgrid=False))
+                      height=280, margin=dict(l=20, r=50, t=10, b=20), xaxis=dict(gridcolor='rgba(148,163,184,0.1)'), yaxis=dict(showgrid=False))
     return fig
 
 # =============================================================================
@@ -154,22 +239,53 @@ def carrier_chart(df):
 # =============================================================================
 def main():
     if AUTOREFRESH_AVAILABLE:
-        st_autorefresh(interval=5000, key="r")
+        st_autorefresh(interval=3000, key="r")
     
+    start_kafka()
+    k = get_kafka_state()
     s = get_stats()
     m = get_monthly()
     c = get_carriers()
     
-    st.markdown('<div class="header"><h1>Airline Monitor</h1><p>ClickHouse Analytics Dashboard</p></div>', unsafe_allow_html=True)
+    # Header
+    st.markdown('<div class="header"><div><h1>Airline Monitor</h1><p>Real-time Pipeline Dashboard</p></div></div>', unsafe_allow_html=True)
     
-    # Metrics
+    # Kafka Bar
+    status = "status-on" if k["running"] else "status-off"
+    status_txt = "Online" if k["running"] else "Offline"
+    uptime = str(timedelta(seconds=int((datetime.now() - k["start"]).total_seconds()))) if k["start"] else "0:00:00"
+    last = f'{(datetime.now() - k["last"]).seconds}s ago' if k["last"] else "Never"
+    
+    st.markdown(f"""
+    <div class="kafka-bar">
+        <div style="display:flex;align-items:center;gap:1rem;">
+            <span class="status {status}"><span class="dot"></span>Kafka {status_txt}</span>
+            <div class="kafka-config">
+                <span>{KAFKA_BOOTSTRAP}</span>
+                <span>{KAFKA_TOPIC}</span>
+            </div>
+        </div>
+        <div class="kafka-info">
+            <div class="kafka-item"><span class="kafka-val">{fmt(k["total"])}</span><span class="kafka-lbl">Messages</span></div>
+            <div class="kafka-item"><span class="kafka-val">{k["rate"]}</span><span class="kafka-lbl">msg/min</span></div>
+            <div class="kafka-item"><span class="kafka-val">{len(k["buffer"])}</span><span class="kafka-lbl">Buffer</span></div>
+            <div class="kafka-item"><span class="kafka-val">{last}</span><span class="kafka-lbl">Last Msg</span></div>
+            <div class="kafka-item"><span class="kafka-val">{uptime}</span><span class="kafka-lbl">Uptime</span></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Throughput Chart
+    st.plotly_chart(throughput_chart(k["buffer"]), use_container_width=True, key="tp")
+    
+    # ClickHouse Metrics
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        st.markdown(f'<div class="metric"><div class="metric-val">{format_number(s["records"])}</div><div class="metric-lbl">Records</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric"><div class="metric-val">{fmt(s["records"])}</div><div class="metric-lbl">Records</div></div>', unsafe_allow_html=True)
     with c2:
-        st.markdown(f'<div class="metric"><div class="metric-val">{format_number(s["flights"])}</div><div class="metric-lbl">Flights</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric"><div class="metric-val">{fmt(s["flights"])}</div><div class="metric-lbl">Flights</div></div>', unsafe_allow_html=True)
     with c3:
-        st.markdown(f'<div class="metric"><div class="metric-val">{format_number(s["delayed"])}</div><div class="metric-lbl">Delayed</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric"><div class="metric-val">{fmt(s["delayed"])}</div><div class="metric-lbl">Delayed</div></div>', unsafe_allow_html=True)
     with c4:
         st.markdown(f'<div class="metric"><div class="metric-val">{s["rate"]*100:.1f}%</div><div class="metric-lbl">Delay Rate</div></div>', unsafe_allow_html=True)
     with c5:
