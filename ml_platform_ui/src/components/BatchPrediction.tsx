@@ -38,7 +38,7 @@ const months = [
 
 export default function BatchPrediction({ carriers, airports }: BatchPredictionProps) {
     const [items, setItems] = useState<PredictionRequest[]>([
-        { carrier: '', airport: '', month: new Date().getMonth() + 1, year: new Date().getFullYear() }
+        { carrier: '', airport: '', month: new Date().getMonth() + 1, year: 2026 }
     ]);
     const [loading, setLoading] = useState(false);
     const [results, setResults] = useState<BatchPredictResponse | null>(null);
@@ -131,14 +131,17 @@ export default function BatchPrediction({ carriers, airports }: BatchPredictionP
                                 </TextField>
                             </Grid>
                             <Grid size={{ xs: 2 }}>
-                                <TextField
-                                    type="number"
-                                    fullWidth
-                                    label="Year"
-                                    value={item.year}
-                                    onChange={(e) => updateItem(index, 'year', Number(e.target.value))}
-                                    size="small"
-                                />
+                                <Typography
+                                    variant="body2"
+                                    sx={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        height: '40px',
+                                        color: 'text.secondary'
+                                    }}
+                                >
+                                    2026
+                                </Typography>
                             </Grid>
                             <Grid size={{ xs: 1 }}>
                                 <IconButton

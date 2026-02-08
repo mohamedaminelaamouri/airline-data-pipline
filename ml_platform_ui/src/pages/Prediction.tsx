@@ -36,7 +36,7 @@ export default function Prediction() {
     const [carrier, setCarrier] = useState('');
     const [airport, setAirport] = useState('');
     const [month, setMonth] = useState(new Date().getMonth() + 1);
-    const [year, setYear] = useState(new Date().getFullYear());
+    const [year] = useState(2026);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState<PredictionResult | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -148,14 +148,17 @@ export default function Prediction() {
                                     </FormControl>
                                 </Grid>
                                 <Grid size={{ xs: 12, sm: 6 }}>
-                                    <TextField
-                                        fullWidth
-                                        label="Year"
-                                        type="number"
-                                        size="small"
-                                        value={year}
-                                        onChange={(e) => setYear(Number(e.target.value))}
-                                    />
+                                    <Typography
+                                        variant="body2"
+                                        sx={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            height: '40px',
+                                            color: 'text.secondary'
+                                        }}
+                                    >
+                                        Year: 2026 (fixed)
+                                    </Typography>
                                 </Grid>
                             </Grid>
 
