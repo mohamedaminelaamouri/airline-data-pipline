@@ -1,4 +1,4 @@
-.PHONY: help install start stop logs load-data init-db clean
+.PHONY: help install start stop logs load-data init-db clean clean-docker
 
 help:
 	@echo "Targets:"
@@ -8,12 +8,14 @@ help:
 	@echo "  logs              View logs (all services)"
 	@echo "  init-db           Initialize ClickHouse tables"
 	@echo "  load-data         Load historical data"
-	@echo "  clean             Remove Docker volumes"
+	@echo "  pipeline          Run Medallion pipeline"
+	@echo "  train             Train ML model"
+	@echo "  clean             Remove cache files"
+	@echo "  clean-docker      Remove Docker volumes"
 
 install:
 	pip install -r requirements.txt
-	pip install -r requirements-streamlit.txt
-	cd backend && pip install -r requirements.txt
+	pip install -r requirements-ml-api.txt
 
 start:
 	docker compose up -d
@@ -30,16 +32,19 @@ init-db:
 load-data:
 	python scripts/load_historical_data.py
 
-clean:
-	docker compose down -v
+pipeline:
+	python scripts/medallion_pipeline.py
 
-streamlit:
-	$(PYTHON) -m streamlit run visualization/realtime_app.py --server.port 8501 --server.address 0.0.0.0
+train:
+	python scripts/train_model_production.py
+
+monitor:
+	python realtime_app.py
 
 clean:
-	rm -rf .venv .venv-consumer .pytest_cache
+	rm -rf .pytest_cache
 	find . -type d -name '__pycache__' -prune -exec rm -rf {} +
 	rm -f logs/*.log
 
 clean-docker:
-	docker compose down
+	docker compose down -v

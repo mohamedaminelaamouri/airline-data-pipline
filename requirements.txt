@@ -1,6 +1,6 @@
-# Python Dependencies for Real-Time Data Pipeline
+# Python Dependencies for Airline Data Pipeline
 
-# Core Dependencies
+# Core
 python-dotenv==1.0.0
 
 # Kafka
@@ -16,18 +16,13 @@ pymongo==4.6.1
 pandas==2.1.4
 numpy==1.26.2
 
-# Visualization
-streamlit==1.29.0
-streamlit-autorefresh==1.0.1
-plotly==5.18.0
-
-# Monitoring & Logging
+# Logging
 loguru==0.7.2
 
 # Performance
 psutil==5.9.6
 
-# Machine Learning (for Script 3: ML Training Pipeline)
+# Machine Learning
 scikit-learn==1.4.0
 xgboost==2.0.3
 imbalanced-learn==0.12.0
