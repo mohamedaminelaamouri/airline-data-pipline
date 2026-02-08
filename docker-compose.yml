@@ -229,36 +229,7 @@ services:
         max-size: "5m"
         max-file: "2"
 
-  # Streamlit Dashboard - Real-time Monitoring (Port 8501)
-  streamlit:
-    image: python:3.11-slim
-    container_name: streamlit-realtime
-    depends_on:
-      - clickhouse
-      - kafka
-    working_dir: /app
-    volumes:
-      - ./:/app
-    ports:
-      - "8501:8501"
-    environment:
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_HTTP_PORT: "8123"
-      CLICKHOUSE_DATABASE: airline_data
-      KAFKA_HOST: kafka
-      KAFKA_PORT: "29092"
-      KAFKA_TOPIC: airline-delays
-    command: >
-      sh -c "pip install --no-cache-dir streamlit streamlit-autorefresh confluent-kafka clickhouse-connect plotly pandas numpy && 
-             streamlit run realtime_app.py --server.port 8501 --server.address 0.0.0.0"
-    networks:
-      - airline-network
-    mem_limit: 512m
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
+
 
 # =============================================================================
 # VOLUMES

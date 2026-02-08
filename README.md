@@ -1,197 +1,258 @@
-# Airline Delay Prediction Platform
+# Airline Data Pipeline
 
-Pipeline de données et Machine Learning pour prédire les retards aériens avec dashboard interactif React.
+Plateforme ML end-to-end de prediction de retards aeriens utilisant une architecture Big Data moderne.
 
-## Architecture
+---
+
+## Architecture Technique
+
+```mermaid
+flowchart TB
+    subgraph INGESTION["Data Ingestion"]
+        CSV[("CSV Files")]
+        NIFI["NiFi"]
+        KAFKA["Kafka"]
+    end
+    
+    subgraph STORAGE["Storage"]
+        CLICKHOUSE[("ClickHouse")]
+        MONGODB[("MongoDB")]
+    end
+    
+    subgraph PROCESSING["Data Processing"]
+        BRONZE["Bronze"]
+        SILVER["Silver"]
+        GOLD_BI["Gold BI"]
+        GOLD_ML["Gold ML"]
+    end
+    
+    subgraph ML_LAYER["Machine Learning"]
+        TRAINING["XGBoost"]
+        MODEL[("Model")]
+        INFERENCE["Inference"]
+    end
+    
+    subgraph API_LAYER["API"]
+        FASTAPI["FastAPI"]
+        ALERTS["Alerts"]
+    end
+    
+    subgraph UI_LAYER["Presentation"]
+        REACT["React"]
+        POWERBI["Power BI"]
+    end
+
+    CSV --> NIFI
+    NIFI --> KAFKA
+    KAFKA --> CLICKHOUSE
+    
+    CLICKHOUSE --> BRONZE
+    BRONZE --> SILVER
+    SILVER --> GOLD_BI
+    SILVER --> GOLD_ML
+    
+    GOLD_BI --> POWERBI
+    
+    GOLD_ML --> TRAINING
+    TRAINING --> MODEL
+    GOLD_ML --> MONGODB
+    
+    MODEL --> INFERENCE
+    MONGODB --> INFERENCE
+    INFERENCE --> FASTAPI
+    FASTAPI --> ALERTS
+    
+    FASTAPI --> REACT
+    ALERTS --> REACT
+
+    classDef database fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef processing fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef api fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    classDef ui fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef ingestion fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    
+    class CSV,CLICKHOUSE,MONGODB,MODEL database
+    class BRONZE,SILVER,GOLD_BI,GOLD_ML,TRAINING,INFERENCE processing
+    class FASTAPI,ALERTS api
+    class REACT,POWERBI ui
+    class NIFI,KAFKA ingestion
+```
+
+---
+
+## Services Docker
+
+| Service | Image | Port | Description |
+|---------|-------|------|-------------|
+| Zookeeper | confluentinc/cp-zookeeper:7.5.0 | 2181 | Coordination Kafka |
+| Kafka | confluentinc/cp-kafka:7.5.0 | 9092 | Message broker |
+| NiFi | apache/nifi:1.23.2 | 8080 | Ingestion de donnees |
+| ClickHouse | clickhouse/clickhouse-server:23.8 | 8123 | Base analytique |
+| MongoDB | mongo:7.0 | 27017 | Feature store |
+| ML API | python:3.11-slim | 8001 | Predictions FastAPI |
+| ML UI | node:20-alpine | 3005 | Dashboard React |
+
+---
+
+## Architecture Medallion
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           DATA PIPELINE                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌──────────┐    ┌──────────┐    ┌──────────────┐    ┌──────────────┐    │
-│   │  NiFi    │───▶│  Kafka   │───▶│  ClickHouse  │───▶│   ML API     │    │
-│   │ Ingestion│    │ Streaming│    │   Database   │    │  (FastAPI)   │    │
-│   └──────────┘    └──────────┘    └──────────────┘    └──────────────┘    │
-│       :8080          :9092           :8123               :8001             │
-│                                                             │              │
-│                                                             ▼              │
-│                                      ┌──────────────────────────────────┐  │
-│                                      │        INTERFACES                │  │
-│                                      ├──────────────────────────────────┤  │
-│                                      │  React Dashboard    :3000        │  │
-│                                      │  (Prédictions ML)               │  │
-│                                      │                                  │  │
-│                                      │  Streamlit Realtime :8501        │  │
-│                                      │  (Monitoring Kafka)             │  │
-│                                      └──────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
+BRONZE (Raw) --> SILVER (Cleaned) --> GOLD_BI (Dashboards)
+                                  --> GOLD_ML (ML Features)
 ```
 
-## Stack Technique
+| Table | Engine | Usage |
+|-------|--------|-------|
+| bronze_flights | MergeTree | Donnees brutes CSV |
+| silver_flights | ReplacingMergeTree | Donnees nettoyees |
+| gold_bi | ReplacingMergeTree | Power BI / Dashboards |
+| gold_ml_features | ReplacingMergeTree | Entrainement ML |
+| ml_predictions | ReplacingMergeTree | Resultats predictions |
 
-| Composant | Technologie | Port | Description |
-|-----------|-------------|------|-------------|
-| Database | ClickHouse 23.8 | 8123 | OLAP pour analytics rapides |
-| Cache | MongoDB 7.0 | 27017 | Stockage ML artifacts |
-| Message Broker | Kafka 7.5 | 9092 | Streaming temps réel |
-| Ingestion | NiFi 1.23 | 8080 | ETL visuel |
-| ML API | FastAPI | 8001 | REST API prédictions |
-| Dashboard | React + Vite | 3000 | Interface ML |
-| Monitoring | Streamlit | 8501 | Flux Kafka temps réel |
+---
 
-## Démarrage Rapide
+## Scripts Pipeline
 
-### 1. Lancer tous les services
+| Script | Description |
+|--------|-------------|
+| load_historical_data.py | CSV vers ClickHouse |
+| load_airports_gps.py | Coordonnees GPS |
+| medallion_pipeline.py | Bronze vers Silver vers Gold |
+| train_model_production.py | Entrainement XGBoost |
+| populate_feature_store.py | ClickHouse vers MongoDB |
+| kafka_to_clickhouse.py | Consumer Kafka temps reel |
 
-```bash
-docker compose up -d
-```
-
-### 2. Vérifier les services
-
-```bash
-docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-```
-
-### 3. Accéder aux interfaces
-
-| Interface | URL |
-|-----------|-----|
-| Dashboard ML (React) | http://localhost:3000 |
-| Monitoring Temps Réel | http://localhost:8501 |
-| API Documentation | http://localhost:8001/docs |
-| NiFi | http://localhost:8080 |
-
-## Structure du Projet
-
-```
-├── ml_api/                 # API FastAPI (prédictions ML)
-│   ├── app.py              # Point d'entrée API
-│   └── utils/              # Utilitaires
-│
-├── ml_ui/                  # Dashboard React
-│   ├── src/
-│   │   ├── App.jsx         # Application principale
-│   │   ├── api.js          # Client API
-│   │   └── styles.css      # Styles
-│   └── package.json
-│
-├── scripts/                # Scripts de traitement
-│   ├── train_model_production.py # Entraînement XGBClassifier (production)
-│   ├── integrate_classification_model.py # Intégration du modèle de classification
-│   ├── populate_feature_store.py # Remplissage Feature Store (MongoDB)
-│   ├── load_historical_data.py   # Chargement CSV
-│   └── kafka_to_clickhouse.py    # Consumer Kafka
-│
-├── config/                 # Configurations
-│   └── clickhouse/
-│       └── init.sql        # Schéma BDD
-│
-├── data/                   # Données source
-│   ├── Airline_Delay_Cause_Cpt.csv
-│   └── airports_gps.csv
-│
-├── nifi/                   # Flows NiFi
-│   └── flows/
-│
-├── docs/                   # Documentation
-│   ├── ARCHITECTURE.md
-│   ├── ML_COMPREHENSIVE_GUIDE.md
-│   └── ...
-│
-├── realtime_app.py         # App Streamlit monitoring
-├── docker-compose.yml      # Orchestration services
-├── requirements-ml-api.txt # Dépendances API
-└── Makefile                # Commandes utiles
-```
+---
 
 ## API Endpoints
 
-| Méthode | Endpoint | Description |
-|---------|----------|-------------|
-| GET | `/health` | Santé de l'API |
-| GET | `/stats/summary` | Statistiques globales |
-| GET | `/predictions` | Liste des prédictions |
-| GET | `/explainability/global` | Feature importance |
-| GET | `/explainability/route` | Analyse par route |
-| GET | `/monitoring` | Métriques monitoring |
-| GET | `/metadata` | Carriers et airports |
-| GET | `/stats/monthly` | Stats mensuelles |
+| Endpoint | Methode | Description |
+|----------|---------|-------------|
+| /health | GET | Health check |
+| /predict | POST | Prediction single |
+| /predict/batch | POST | Predictions multiples |
+| /predictions/history | GET | Historique |
+| /predictions/statistics | GET | Statistiques |
 
-## Commandes Utiles
+---
 
+## Interfaces
+
+### React Dashboard (Port 3005)
+- Dashboard, Prediction, Alerts, History
+- Material-UI + TypeScript
+
+### Monitoring Kafka (Local)
 ```bash
-# Status des services
-docker compose ps
-
-# Logs d'un service
-docker compose logs -f ml_api
-
-# Redémarrer un service
-docker compose restart ml_ui
-
-# Arrêter tout
-docker compose down
-
-# Rebuild complet
-docker compose down -v && docker compose up -d --build
+python realtime_app.py
 ```
+- Affichage temps reel des messages Kafka
+- Execution locale (pas dans Docker)
 
-## Variables d'Environnement
+### Power BI
+- Connecte a Gold BI
+- Reporting et KPIs
 
-```bash
-# ClickHouse
-CLICKHOUSE_HOST=clickhouse
-CLICKHOUSE_HTTP_PORT=8123
-CLICKHOUSE_DATABASE=airline_data
+---
 
-# Kafka
-KAFKA_HOST=kafka
-KAFKA_PORT=29092
-KAFKA_TOPIC=airline-delays
+## Feature Engineering
 
-# MongoDB
-MONGODB_URL=mongodb://mongodb:27017
-```
+| Categorie | Features |
+|-----------|----------|
+| Identifiants | carrier_id, airport_id (CityHash64) |
+| Target | delay_rate, is_delayed (seuil 20%) |
+| Lag Pair | pair_lag1, pair_lag3_mean |
+| Lag Airport | airport_lag1, airport_lag3_mean |
+| Lag Carrier | carrier_lag1, carrier_lag3_mean |
+| Cyclique | month_sin, month_cos |
+| Saisonnier | is_summer, is_winter, is_holiday_season |
 
-## Développement
+---
 
-### Backend (API)
-
-```bash
-cd ml_api
-pip install -r ../requirements-ml-api.txt
-uvicorn app:app --reload --port 8001
-```
-
-### Frontend (React)
+## Quick Start
 
 ```bash
-cd ml_ui
-npm install
-npm run dev
-```
+# 1. Demarrer les services
+docker-compose up -d
 
-## Machine Learning
-
-Le pipeline ML utilise un modèle XGBoost Classifier pour prédire le risque de retard (classification).
-
-- **Train**: 2010-2018 (données historiques)
-- **Test**: 2019-2022 (validation)
-- **Production**: modèle intégré et Feature Store alimenté
-
-Exécuter le pipeline ML :
-
-```bash
+# 2. Charger les donnees
 python scripts/load_historical_data.py
+
+# 3. Pipeline Medallion
+python scripts/medallion_pipeline.py
+
+# 4. Entrainer le modele
 python scripts/train_model_production.py
-python scripts/integrate_classification_model.py
+
+# 5. Peupler le feature store
 python scripts/populate_feature_store.py
+
+# 6. Monitoring temps reel (optionnel)
+python realtime_app.py
+
+# 7. Acceder aux interfaces
+# React: http://localhost:3005
+# API: http://localhost:8001/docs
 ```
 
-## Ressources
+---
 
-- Documentation complète: `docs/`
-- Guide ML détaillé: `docs/ML_COMPREHENSIVE_GUIDE.md`
-- Architecture: `docs/ARCHITECTURE.md`
+## Workflow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Docker
+    participant Scripts
+    participant API
+    participant UI
+    
+    User->>Docker: docker-compose up -d
+    Docker-->>User: 8 services demarres
+    
+    User->>Scripts: load_historical_data.py
+    Scripts-->>User: CSV charge
+    
+    User->>Scripts: medallion_pipeline.py
+    Scripts-->>User: Bronze/Silver/Gold crees
+    
+    User->>Scripts: train_model_production.py
+    Scripts-->>User: Modele entraine
+    
+    User->>Scripts: populate_feature_store.py
+    Scripts-->>User: Features dans MongoDB
+    
+    User->>UI: http://localhost:3000
+    UI->>API: POST /predict
+    API-->>UI: Prediction + Risk
+```
+
+---
+
+## Metriques ML
+
+| Metrique | Valeur |
+|----------|--------|
+| ROC-AUC (Val) | ~0.83 |
+| ROC-AUC (Test) | ~0.86 |
+| PR-AUC | ~0.75 |
+
+### Seuils d'alerte
+
+| Probabilite | Categorie |
+|-------------|-----------|
+| 0-50% | Low Risk |
+| 50-70% | Medium Risk |
+| 70-85% | High Risk |
+| 85%+ | Critical |
+
+---
+
+## Points Cles
+
+1. **Feature Engineering en SQL** - Coherence training/serving
+2. **Hash-based Encoding** - CityHash64 pour IDs stables
+3. **Architecture Medallion** - Tracabilite des donnees
+4. **Temporal Split** - Evaluation realiste (pas de data leakage)
+5. **Feature Store MongoDB** - Acces rapide aux features
+6. **Alerting Integre** - Notifications automatiques
