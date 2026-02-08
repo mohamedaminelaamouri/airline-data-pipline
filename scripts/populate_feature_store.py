@@ -82,7 +82,7 @@ def main():
     mongo_db = mongo_client['airline_ml']
     feature_store = mongo_db['feature_store']
     
-    print("   ✅ ClickHouse and MongoDB connected")
+    print("   [OK] ClickHouse and MongoDB connected")
     
     # =========================================================================
     # Validate schema
