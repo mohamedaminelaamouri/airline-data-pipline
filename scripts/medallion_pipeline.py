@@ -48,13 +48,16 @@ def bronze_to_silver():
     print("[1/3] BRONZE -> SILVER: Nettoyage des données")
     print("=" * 60)
     
-    # Vérifier si bronze a des données
+    # Synchroniser depuis la table flights (source NiFi)
+    flights_count = client.command("SELECT count() FROM flights")
     bronze_count = client.command("SELECT count() FROM bronze_flights")
+    print(f"  Lines in flights (source): {flights_count:,}")
     print(f"  Lines in bronze_flights: {bronze_count:,}")
     
-    if bronze_count == 0:
-        print("  Bronze empty, loading from airline_delays...")
-        # Charger depuis la table existante airline_delays vers bronze
+    if flights_count > bronze_count:
+        print(f"  Synchronizing {flights_count - bronze_count:,} new lines from flights...")
+        # Vider bronze et recharger depuis flights
+        client.command("TRUNCATE TABLE bronze_flights")
         client.command("""
             INSERT INTO bronze_flights (
                 year, month, carrier, carrier_name, airport, airport_name,
@@ -68,11 +71,11 @@ def bronze_to_silver():
                 arr_flights, arr_del15, carrier_ct, weather_ct, nas_ct,
                 security_ct, late_aircraft_ct, arr_cancelled, arr_diverted,
                 arr_delay, carrier_delay, weather_delay, nas_delay,
-                security_delay, late_aircraft_delay, 'airline_delays_migration'
-            FROM airline_delays
+                security_delay, late_aircraft_delay, 'flights_nifi_ingestion'
+            FROM flights
         """)
         bronze_count = client.command("SELECT count() FROM bronze_flights")
-        print(f"  Migrated {bronze_count:,} lines to bronze")
+        print(f"  Bronze synchronized: {bronze_count:,} lines")
     
     # Nettoyer et insérer dans silver
     print("\n  Cleaning in progress...")
