@@ -18,11 +18,9 @@ except ImportError:
 try:
     from ml_api.utils.mongodb_client import get_mongo_client
     from ml_api.utils.ml_inference import get_ml_service, FEATURE_COLUMNS
-    from ml_api.alerts import get_alert_service, check_prediction_for_alerts, AlertFilter, AlertStatus, AlertType, AlertSeverity
 except ImportError:
     from utils.mongodb_client import get_mongo_client
     from utils.ml_inference import get_ml_service, FEATURE_COLUMNS
-    from alerts import get_alert_service, check_prediction_for_alerts, AlertFilter, AlertStatus, AlertType, AlertSeverity
 
 import pandas as pd
 import random
@@ -41,52 +39,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Données mock pour démo (quand ClickHouse n'est pas accessible)
-MOCK_CARRIERS = ["AA", "DL", "UA", "WN", "B6", "AS", "NK", "F9"]
-MOCK_AIRPORTS = ["ATL", "DFW", "DEN", "ORD", "LAX", "CLT", "LAS", "PHX", "MIA", "SEA"]
-MOCK_RISK_CATEGORIES = ["critical", "high", "medium", "low"]
-
-def generate_mock_predictions(limit=100):
-    """Génère des prédictions factices pour la démo"""
-    data = []
-    for i in range(limit):
-        month = random.randint(1, 12)
-        risk_idx = random.choices([0, 1, 2, 3], weights=[0.05, 0.15, 0.30, 0.50])[0]
-        risk_cat = MOCK_RISK_CATEGORIES[risk_idx]
-        
-        # Delay rate selon le risque
-        if risk_cat == "critical":
-            delay_rate = random.uniform(0.50, 0.80)
-            risk_score = random.uniform(80, 100)
-        elif risk_cat == "high":
-            delay_rate = random.uniform(0.30, 0.50)
-            risk_score = random.uniform(60, 80)
-        elif risk_cat == "medium":
-            delay_rate = random.uniform(0.15, 0.30)
-            risk_score = random.uniform(40, 60)
-        else:
-            delay_rate = random.uniform(0.05, 0.15)
-            risk_score = random.uniform(0, 40)
-            
-        data.append({
-            "carrier": random.choice(MOCK_CARRIERS),
-            "origin_airport": random.choice(MOCK_AIRPORTS),
-            "year": 2026,
-            "month": month,
-            "predicted_delay_rate": round(delay_rate, 4),
-            "risk_score": round(risk_score, 2),
-            "risk_category": risk_cat,
-            "arr_flights": random.randint(100, 5000),
-            "model_version": "xgb_classifier_demo_v1.0",
-            "confidence": round(random.uniform(0.75, 0.95), 3),
-            "top_feature_1": "historical_delay_rate",
-            "top_feature_1_importance": round(random.uniform(0.25, 0.35), 3),
-            "top_feature_2": "carrier_severity",
-            "top_feature_2_importance": round(random.uniform(0.15, 0.25), 3),
-            "top_feature_3": "monthly_seasonality",
-            "top_feature_3_importance": round(random.uniform(0.10, 0.20), 3),
-        })
-    return data
 
 
 @app.get("/health")
@@ -200,22 +152,7 @@ async def predict(request: PredictRequest):
             model_version=ml_service.model_version,
             features_used=dict(zip(ml_service.feature_columns, features.flatten().tolist()))
         )
-        
-        # Check for alerts on high-risk predictions
-        try:
-            alert_service = get_alert_service()
-            alert = check_prediction_for_alerts(
-                prediction=prediction,
-                carrier=request.carrier,
-                airport=request.airport,
-                year=request.year,
-                month=request.month,
-                alert_service=alert_service
-            )
-            if alert:
-                logger.info(f"Alert created: {alert.type.value} for {request.carrier}/{request.airport}")
-        except Exception as e:
-            logger.warning(f"Failed to create alert: {e}")
+
         
         return PredictResponse(
             request_id=request_id,
@@ -254,8 +191,8 @@ def predict_metadata():
         }
     except Exception as e:
         return {
-            "carriers": MOCK_CARRIERS,
-            "airports": MOCK_AIRPORTS,
+            "carriers": [],
+            "airports": [],
             "model_version": "unavailable",
             "cutoff": 0.5,
             "feature_columns": [],
@@ -551,26 +488,19 @@ def summary_stats():
         row["critical_risk_percentage"] = (critical / total * 100) if total else 0
         return row
     except Exception:
-        # Mode DEMO avec données mock
-        mock_data = generate_mock_predictions(500)
-        df_mock = pd.DataFrame(mock_data)
-        total = len(df_mock)
-        critical = len(df_mock[df_mock["risk_category"] == "critical"])
-        high = len(df_mock[df_mock["risk_category"] == "high"])
-        medium = len(df_mock[df_mock["risk_category"] == "medium"])
-        low = len(df_mock[df_mock["risk_category"] == "low"])
+        # Mode degraded - return empty stats
         return {
-            "total_predictions": total,
-            "critical_risk_routes": critical,
-            "high_risk_routes": high,
-            "medium_risk_routes": medium,
-            "low_risk_routes": low,
-            "carriers_analyzed": len(df_mock["carrier"].unique()),
-            "airports_analyzed": len(df_mock["origin_airport"].unique()),
-            "avg_predicted_delay": float(df_mock["predicted_delay_rate"].mean()),
-            "avg_risk_score": float(df_mock["risk_score"].mean()),
-            "high_risk_percentage": (high / total * 100),
-            "critical_risk_percentage": (critical / total * 100),
+            "total_predictions": 0,
+            "critical_risk_routes": 0,
+            "high_risk_routes": 0,
+            "medium_risk_routes": 0,
+            "low_risk_routes": 0,
+            "carriers_analyzed": 0,
+            "airports_analyzed": 0,
+            "avg_predicted_delay": 0.0,
+            "avg_risk_score": 0.0,
+            "high_risk_percentage": 0.0,
+            "critical_risk_percentage": 0.0,
         }
 
 
@@ -619,21 +549,8 @@ def predictions(
         df = query_df(sql, parameters=params)
         return df.to_dict(orient="records")
     except Exception:
-        # Mode DEMO avec données mock
-        mock_data = generate_mock_predictions(200)
-        df_mock = pd.DataFrame(mock_data)
-        
-        # Appliquer les filtres
-        if carrier:
-            df_mock = df_mock[df_mock["carrier"] == carrier]
-        if airport:
-            df_mock = df_mock[df_mock["origin_airport"] == airport]
-        if risk_category:
-            df_mock = df_mock[df_mock["risk_category"] == risk_category]
-        if month:
-            df_mock = df_mock[df_mock["month"] == month]
-        
-        return df_mock.to_dict(orient="records")
+        # Mode degraded - return empty list
+        return []
 
 
 @app.get("/explainability/global")
@@ -665,23 +582,10 @@ def explainability_global():
             "risk_distribution": risk_df.to_dict(orient="records"),
         }
     except Exception:
-        # Mode DEMO avec données mock
-        mock_data = generate_mock_predictions(500)
-        df_mock = pd.DataFrame(mock_data)
-        
-        risk_dist = df_mock["risk_category"].value_counts().reset_index()
-        risk_dist.columns = ["risk_category", "count"]
-        
+        # Mode degraded
         return {
-            "features": [{
-                "top_feature_1": "historical_delay_rate",
-                "avg_importance_1": 0.32,
-                "top_feature_2": "carrier_severity",
-                "avg_importance_2": 0.21,
-                "top_feature_3": "monthly_seasonality",
-                "avg_importance_3": 0.15,
-            }],
-            "risk_distribution": risk_dist.to_dict(orient="records"),
+            "features": [],
+            "risk_distribution": [],
         }
 
 
@@ -715,13 +619,8 @@ def explainability_route(
         df = query_df(sql, parameters={"carrier": carrier, "airport": airport})
         return df.to_dict(orient="records")
     except Exception:
-        # Mode DEMO avec données mock
-        mock_data = generate_mock_predictions(12)  # 12 mois
-        df_mock = pd.DataFrame(mock_data)
-        df_mock["carrier"] = carrier
-        df_mock["origin_airport"] = airport
-        df_mock["month"] = range(1, 13)
-        return df_mock.to_dict(orient="records")
+        # Mode degraded
+        return []
 
 
 @app.get("/monitoring")
@@ -749,10 +648,10 @@ def metadata():
             "airports": airports_df["origin_airport"].dropna().tolist() if not airports_df.empty else [],
         }
     except Exception:
-        # Mode DEMO avec données mock
+        # Mode degraded
         return {
-            "carriers": sorted(MOCK_CARRIERS),
-            "airports": sorted(MOCK_AIRPORTS),
+            "carriers": [],
+            "airports": [],
         }
 
 
@@ -773,16 +672,8 @@ def monthly_stats():
         df = query_df(sql)
         return df.to_dict(orient="records")
     except Exception:
-        # Mode DEMO avec données mock
-        mock_data = generate_mock_predictions(500)
-        df_mock = pd.DataFrame(mock_data)
-        monthly = df_mock.groupby('month').agg({
-            'predicted_delay_rate': 'mean',
-            'risk_score': 'mean',
-            'arr_flights': 'sum'
-        }).reset_index()
-        monthly.columns = ['month', 'avg_predicted_delay', 'avg_risk_score', 'total_flights']
-        return monthly.to_dict(orient="records")
+        # Mode degraded
+        return []
 
 
 @app.get("/stats/classification")
@@ -831,24 +722,16 @@ def classification_stats():
         total = float(stats.get("total_predictions", 0))
         above = float(stats.get("above_cutoff", 0))
     except Exception:
-        # Mode DEMO avec données mock
-        mock_data = generate_mock_predictions(500)
-        df_mock = pd.DataFrame(mock_data)
-        
-        risk_df = df_mock.groupby('risk_category').agg({
-            'predicted_delay_rate': ['count', 'mean'],
-            'risk_score': 'mean'
-        }).reset_index()
-        risk_df.columns = ['risk_category', 'count', 'avg_probability', 'avg_risk_score']
-        
-        total = len(df_mock)
-        above = len(df_mock[df_mock['predicted_delay_rate'] >= 0.47])
+        # Mode degraded
+        risk_df = pd.DataFrame()
+        total = 0
+        above = 0
         stats = {
-            'total_predictions': total,
-            'above_cutoff': above,
-            'avg_probability': df_mock['predicted_delay_rate'].mean(),
-            'unique_carriers': df_mock['carrier'].nunique(),
-            'unique_airports': df_mock['origin_airport'].nunique(),
+            'total_predictions': 0,
+            'above_cutoff': 0,
+            'avg_probability': 0,
+            'unique_carriers': 0,
+            'unique_airports': 0,
         }
     
     # Métriques du modèle production (mis à jour)
@@ -968,155 +851,13 @@ def cost_stats():
         }
         
     except Exception:
-        # Mode DEMO avec données mock
-        # Générer des stats réalistes basées sur les prédictions mock
-        mock_data = generate_mock_predictions(500)
-        df = pd.DataFrame(mock_data)
-        
-        # Simuler arr_delay basé sur le risk score et arr_flights
-        df['arr_delay'] = (df['predicted_delay_rate'] * df['arr_flights'] * random.uniform(15, 45)).astype(int)
-        df['arr_del15'] = (df['predicted_delay_rate'] * df['arr_flights']).astype(int)
-        
-        # Stats globales
-        total_delay_minutes = df['arr_delay'].sum()
-        total_delayed_flights = df['arr_del15'].sum()
-        total_cost = total_delay_minutes * COST_PER_MINUTE
-        avg_minutes_per_delayed = total_delay_minutes / total_delayed_flights if total_delayed_flights > 0 else 0
-        
-        # Top carriers
-        carriers = df.groupby('carrier').agg({
-            'arr_delay': 'sum',
-            'arr_del15': 'sum',
-            'arr_flights': 'sum'
-        }).reset_index()
-        carriers['delay_cost'] = carriers['arr_delay'] * COST_PER_MINUTE
-        carriers['avg_delay_per_flight'] = carriers['arr_delay'] / carriers['arr_del15']
-        carriers = carriers.nlargest(10, 'delay_cost')
-        carriers['carrier_name'] = carriers['carrier'] + ' Airlines'
-        
-        # Top airports
-        airports = df.groupby('origin_airport').agg({
-            'arr_delay': 'sum',
-            'arr_del15': 'sum',
-            'arr_flights': 'sum'
-        }).reset_index()
-        airports.columns = ['airport', 'delay_minutes', 'delayed_flights', 'total_flights']
-        airports['delay_cost'] = airports['delay_minutes'] * COST_PER_MINUTE
-        airports['avg_delay_per_flight'] = airports['delay_minutes'] / airports['delayed_flights']
-        airports = airports.nlargest(10, 'delay_cost')
-        airports['airport_name'] = airports['airport'] + ' Airport'
-        
+        # Mode degraded - return empty stats
         return {
-            "total_delay_cost": round(total_cost, 2),
-            "total_delay_minutes": int(total_delay_minutes),
-            "avg_minutes_per_delayed_flight": round(avg_minutes_per_delayed, 2),
+            "total_delay_cost": 0.0,
+            "total_delay_minutes": 0,
+            "avg_minutes_per_delayed_flight": 0.0,
             "cost_per_minute": COST_PER_MINUTE,
-            "top_carriers_by_cost": carriers.to_dict(orient='records'),
-            "top_airports_by_cost": airports.to_dict(orient='records')
+            "top_carriers_by_cost": [],
+            "top_airports_by_cost": []
         }
 
-
-# =============================================================================
-# ALERT ENDPOINTS
-# =============================================================================
-
-@app.get("/alerts")
-async def get_alerts(
-    type: Optional[str] = None,
-    severity: Optional[str] = None,
-    status: Optional[str] = None,
-    carrier: Optional[str] = None,
-    airport: Optional[str] = None,
-    limit: int = Query(default=50, le=200),
-    offset: int = Query(default=0, ge=0)
-):
-    """
-    Get alerts with optional filters.
-    
-    Filters:
-    - type: HIGH_DELAY_RISK, CRITICAL_DELAY, ANOMALY, DATA_QUALITY
-    - severity: critical, high, medium, low
-    - status: active, acknowledged, resolved
-    - carrier: carrier code
-    - airport: airport code
-    """
-    try:
-        alert_service = get_alert_service()
-        
-        filter_params = AlertFilter(
-            type=AlertType(type) if type else None,
-            severity=AlertSeverity(severity) if severity else None,
-            status=AlertStatus(status) if status else None,
-            carrier=carrier,
-            airport=airport,
-            limit=limit,
-            offset=offset
-        )
-        
-        alerts = alert_service.get_alerts(filter_params)
-        
-        return {
-            "alerts": alerts,
-            "count": len(alerts),
-            "limit": limit,
-            "offset": offset
-        }
-    except Exception as e:
-        logger.error(f"Failed to get alerts: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/alerts/stats")
-async def get_alert_stats():
-    """Get alert statistics."""
-    try:
-        alert_service = get_alert_service()
-        stats = alert_service.get_stats()
-        
-        return {
-            "total": stats.total,
-            "active": stats.active,
-            "acknowledged": stats.acknowledged,
-            "resolved": stats.resolved,
-            "by_severity": stats.by_severity,
-            "by_type": stats.by_type
-        }
-    except Exception as e:
-        logger.error(f"Failed to get alert stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.put("/alerts/{alert_id}/acknowledge")
-async def acknowledge_alert(alert_id: str, user: str = "system"):
-    """Acknowledge an alert."""
-    try:
-        alert_service = get_alert_service()
-        success = alert_service.acknowledge_alert(alert_id, user)
-        
-        if success:
-            return {"status": "acknowledged", "alert_id": alert_id}
-        else:
-            raise HTTPException(status_code=404, detail="Alert not found or already acknowledged")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to acknowledge alert: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.put("/alerts/{alert_id}/resolve")
-async def resolve_alert(alert_id: str):
-    """Resolve an alert."""
-    try:
-        alert_service = get_alert_service()
-        success = alert_service.resolve_alert(alert_id)
-        
-        if success:
-            return {"status": "resolved", "alert_id": alert_id}
-        else:
-            raise HTTPException(status_code=404, detail="Alert not found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to resolve alert: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
