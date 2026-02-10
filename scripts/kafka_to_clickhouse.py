@@ -29,7 +29,7 @@ CLICKHOUSE_USER = os.getenv('CLICKHOUSE_USER', 'default')
 CLICKHOUSE_PASSWORD = os.getenv('CLICKHOUSE_PASSWORD', '')
 CLICKHOUSE_DATABASE = os.getenv('CLICKHOUSE_DATABASE', 'airline_data')
 
-BATCH_SIZE = int(os.getenv('BATCH_SIZE', '100'))
+BATCH_SIZE = int(os.getenv('BATCH_SIZE', '50'))
 
 # Setup logging
 os.makedirs("logs", exist_ok=True)

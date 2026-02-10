@@ -33,9 +33,6 @@ client = clickhouse_connect.get_client(
     port=CLICKHOUSE_PORT,
     database=CLICKHOUSE_DB
 )
-print(f"✅ Connecté à ClickHouse: {CLICKHOUSE_HOST}:{CLICKHOUSE_PORT}")
-
-
 print(f"Connected to ClickHouse: {CLICKHOUSE_HOST}:{CLICKHOUSE_PORT}")
 
 
@@ -615,10 +612,10 @@ if __name__ == "__main__":
         elapsed = (datetime.now() - start).total_seconds()
         
         print("\n" + "=" * 80)
-        print("✅ PIPELINE MEDALLION TERMINÉ")
+        print("PIPELINE MEDALLION COMPLETED")
         print("=" * 80)
-        print(f"   Temps total: {elapsed:.1f} secondes")
-        print("\n   Tables créées:")
+        print(f"   Total time: {elapsed:.1f} seconds")
+        print("\n   Tables created:")
 
         tables = ['bronze_flights', 'silver_flights']
         if not args.silver_only:
@@ -626,12 +623,7 @@ if __name__ == "__main__":
 
         for table in tables:
             count = client.command(f"SELECT count() FROM {table}")
-            print(f"   • {table}: {count:,} lignes")
-        
-        if not args.silver_only:
-            print("\n   Prochaines étapes:")
-            print("   1. Power BI: Connecter à la table 'gold_bi'")
-            print("   2. ML: Exécuter 'python scripts/train_model_2026.py'")
+            print(f"   - {table}: {count:,} rows")
         
     except Exception as e:
         print(f"\n❌ ERREUR: {e}")
